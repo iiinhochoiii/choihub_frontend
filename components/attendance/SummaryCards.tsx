@@ -2,11 +2,13 @@
 
 import styled from "@emotion/styled";
 import { AlarmClock, CalendarCheck, Palmtree, Timer } from "lucide-react";
-import { getAttendanceStatus, getUsedLeaveDays, getWorkedMinutes } from "@/lib/attendance";
-import { formatDuration, todayKey } from "@/lib/date";
-import { useCurrentUser, useData } from "@/lib/store";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { ErrorState, LoadingState } from "@/components/ui";
+import { getAttendanceStatus, getWorkedMinutes } from "@/lib/attendance";
+import { formatDuration } from "@/lib/date";
+import { useLeaveBalance, useMyAttendance, useTodayAttendance } from "@/queries/attendance";
+import { useCompany } from "@/queries/directory";
 import { mq } from "@/styles/theme";
-import { isAnnualType } from "./utils";
 
 const Grid = styled.div`
   display: grid;
@@ -54,21 +56,34 @@ const Tile = styled.div`
 `;
 
 export function SummaryCards() {
-  const { data } = useData();
-  const user = useCurrentUser();
-  const monthKey = todayKey().slice(0, 7);
+  const company = useCompany();
+  // 이번 달은 서버 기준 오늘로 정한다.
+  const todayQuery = useTodayAttendance();
+  const monthKey = todayQuery.data?.date.slice(0, 7) ?? "";
+  const attendance = useMyAttendance(monthKey, !!monthKey);
+  const balance = useLeaveBalance();
 
-  const records = data.attendance.filter(
-    (r) => r.memberId === user.id && r.date.startsWith(monthKey) && r.checkIn,
-  );
+  // 오늘 조회 실패는 TodayCard가 보여 주므로 여기서는 월 기록·잔액 오류만 다룬다.
+  const error = attendance.error ?? balance.error;
+  if (error) {
+    return (
+      <ErrorState
+        message={getErrorMessage(error)}
+        onRetry={() => {
+          void attendance.refetch();
+          void balance.refetch();
+        }}
+      />
+    );
+  }
+  if (!attendance.data || !balance.data) return todayQuery.error ? null : <LoadingState />;
+
+  const records = attendance.data.filter((r) => r.checkIn);
   const totalMinutes = records.reduce((sum, r) => sum + getWorkedMinutes(r), 0);
-  const lateCount = records.filter((r) => getAttendanceStatus(r, data.company) === "late").length;
+  const lateCount = records.filter((r) => getAttendanceStatus(r, company) === "late").length;
 
-  const used = getUsedLeaveDays(data.leaveRequests, user.id);
-  const pending = data.leaveRequests
-    .filter((r) => r.memberId === user.id && r.status === "pending" && isAnnualType(r.type))
-    .reduce((sum, r) => sum + r.days, 0);
-  const remaining = user.annualLeaveTotal - used;
+  // 연차 잔액은 서버가 계산한다.
+  const { total, used, pending, available } = balance.data;
 
   return (
     <Grid>
@@ -96,7 +111,7 @@ export function SummaryCards() {
           지각
         </span>
         <strong>{lateCount}회</strong>
-        <small>출근 기준 {data.company.workStart}</small>
+        <small>출근 기준 {company.workStart}</small>
       </Tile>
       <Tile>
         <span>
@@ -104,7 +119,7 @@ export function SummaryCards() {
           잔여 연차
         </span>
         <strong>
-          {remaining}일 <small>/ {user.annualLeaveTotal}일</small>
+          {available}일 <small>/ {total}일</small>
         </strong>
         <small>
           사용 {used}일{pending > 0 && ` · 승인 대기 ${pending}일`}

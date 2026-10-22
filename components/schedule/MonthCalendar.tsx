@@ -4,7 +4,7 @@ import styled from "@emotion/styled";
 import { transientOptions } from "@/components/ui";
 import { getMonthMatrix, toDateKey, WEEKDAY_LABELS } from "@/lib/date";
 import { EVENT_CATEGORIES } from "@/lib/labels";
-import type { CalendarEvent } from "@/lib/types";
+import type { CalendarEvent } from "@/types";
 import { mq } from "@/styles/theme";
 
 const MAX_CHIPS = 3;

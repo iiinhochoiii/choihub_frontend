@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { EMAIL_PATTERN } from "@/lib/company";
 import { timeToMinutes } from "@/lib/date";
-import type { CompanyInfo } from "@/lib/types";
+import type { CompanyInfo } from "@/types";
 
 const required = (label: string) =>
   z
@@ -17,8 +17,7 @@ const optionalPattern = (pattern: RegExp, message: string) =>
     .refine((v) => !v || pattern.test(v), message);
 
 /**
- * 회사정보 형식 검증. 사업자번호 중복처럼 다른 회사와 비교해야 하는 검증은
- * isBusinessNumberTaken(lib/platform)으로 제출 시점에 추가한다.
+ * 회사정보 형식 검증. 사업자번호 중복처럼 다른 회사와 비교해야 하는 검증은 서버가 한다.
  */
 export const companySchema = z
   .object({
@@ -59,7 +58,7 @@ export function toCompanyFormInput(company: CompanyInfo): CompanyFormInput {
   return { ...company, defaultAnnualLeave: String(company.defaultAnnualLeave) };
 }
 
-/** 매니저 계정 형식 검증. 이메일 중복은 isEmailTaken(lib/platform)으로 제출 시점에 추가한다. */
+/** 매니저 계정 형식 검증. 이메일 중복은 서버가 검사한다. */
 export const managerSchema = z.object({
   name: z.string().trim().min(1, "이름을 입력하세요."),
   email: z.string().trim().min(1, "이메일을 입력하세요.").regex(EMAIL_PATTERN, "올바른 이메일 형식이 아닙니다."),

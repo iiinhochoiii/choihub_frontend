@@ -2,64 +2,80 @@
 
 import { CalendarDays, Eye, Pencil, Pin, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useState } from "react";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import {
+  ActionError,
   AdjacentNav,
   ArticleActions,
   ArticleBody,
   ArticleHeader,
   ArticleMeta,
   BackToList,
+  isNotFoundError,
   NotFoundArticle,
   useCountViewOnce,
 } from "@/components/articles/ArticleView";
-import { Badge, Button, ButtonLink, Card, ConfirmModal, Person, Row, StatusBadge } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  Card,
+  ConfirmModal,
+  ErrorState,
+  LoadingState,
+  Person,
+  Row,
+  StatusBadge,
+} from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { NOTICE_CATEGORIES } from "@/lib/labels";
-import { getMember, getMemberSummary } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import { sortNotices } from "./NoticeList";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import { useDeleteNotice, useNotice, useViewNotice } from "@/queries/notices";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
 
 const LIST_HREF = "/dashboard/notices";
 
 export function NoticeDetail({ id }: { id: string }) {
   const router = useRouter();
-  const { data, update } = useData();
+  const { getMember, getMemberSummary } = useDirectory();
   const user = useCurrentUser();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const notice = data.notices.find((n) => n.id === id);
+  const { data: notice, isPending, error, refetch } = useNotice(id);
+  const { mutate: viewNotice } = useViewNotice();
+  const deleteNotice = useDeleteNotice();
 
-  const incrementViews = useCallback(
-    (noticeId: string) =>
-      update((prev) => ({
-        ...prev,
-        notices: prev.notices.map((n) => (n.id === noticeId ? { ...n, views: n.views + 1 } : n)),
-      })),
-    [update],
-  );
-  useCountViewOnce(id, !!notice, incrementViews);
+  // 조회수는 서버가 올린다. 글을 불러온 뒤 한 번만 요청한다.
+  useCountViewOnce(id, !!notice, viewNotice);
 
-  if (!notice) {
+  if (isPending) {
     return (
       <>
         <BackToList href={LIST_HREF} label="공지사항 목록" />
-        <NotFoundArticle listHref={LIST_HREF} label="목록으로 돌아가기" />
+        <LoadingState />
       </>
     );
   }
 
-  // 목록과 같은 정렬 기준에서 앞(이전글 = 더 위) / 뒤(다음글 = 더 아래)
-  const ordered = sortNotices(data.notices);
-  const index = ordered.findIndex((n) => n.id === notice.id);
-  const prev = ordered[index - 1];
-  const next = ordered[index + 1];
-  const author = getMember(data, notice.authorId);
+  if (error) {
+    return (
+      <>
+        <BackToList href={LIST_HREF} label="공지사항 목록" />
+        {isNotFoundError(error) ? (
+          <NotFoundArticle listHref={LIST_HREF} label="목록으로 돌아가기" />
+        ) : (
+          <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+        )}
+      </>
+    );
+  }
 
-  const handleDelete = () => {
-    update((p) => ({ ...p, notices: p.notices.filter((n) => n.id !== notice.id) }));
-    router.replace(LIST_HREF);
-  };
+  const author = getMember(notice.authorId);
+
+  const handleDelete = () =>
+    deleteNotice.mutate(notice.id, { onSuccess: () => router.replace(LIST_HREF) });
 
   return (
     <>
@@ -78,9 +94,9 @@ export function NoticeDetail({ id }: { id: string }) {
           <h1>{notice.title}</h1>
           <ArticleMeta>
             <Person
-              name={author?.name ?? "알 수 없음"}
+              name={author?.name ?? UNKNOWN_MEMBER_NAME}
               color={author?.color}
-              caption={getMemberSummary(data, notice.authorId)}
+              caption={getMemberSummary(notice.authorId)}
             />
             <span>
               <CalendarDays />
@@ -102,15 +118,21 @@ export function NoticeDetail({ id }: { id: string }) {
               <Pencil />
               수정
             </ButtonLink>
-            <Button $variant="danger" $size="sm" onClick={() => setConfirmOpen(true)}>
+            <Button
+              $variant="danger"
+              $size="sm"
+              disabled={deleteNotice.isPending}
+              onClick={() => setConfirmOpen(true)}
+            >
               <Trash2 />
               삭제
             </Button>
           </ArticleActions>
         )}
+        {deleteNotice.error && <ActionError role="alert">{getErrorMessage(deleteNotice.error)}</ActionError>}
       </Card>
 
-      <AdjacentNav basePath={LIST_HREF} prev={prev} next={next} />
+      <AdjacentNav basePath={LIST_HREF} prev={notice.prev} next={notice.next} />
 
       <ConfirmModal
         open={confirmOpen}

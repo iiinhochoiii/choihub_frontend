@@ -1,4 +1,4 @@
-import type { CompanyInfo } from "./types";
+import type { CompanyInfo } from "@/types";
 
 export type CompanyKey = keyof CompanyInfo;
 

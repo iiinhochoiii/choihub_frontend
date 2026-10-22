@@ -2,17 +2,16 @@
 
 import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, ShieldCheck } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { LogoMark } from "@/components/common/LogoMark";
 import { Button, Field, Input } from "@/components/ui";
-import { getErrorMessage } from "@/lib/api/authApi";
-import { DEMO_OPERATOR } from "@/lib/platform";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { type LoginFormValues, loginSchema } from "@/lib/schemas/auth";
-import { useOperatorAuth, useOperatorLoginMutation } from "@/lib/store";
+import { useOperatorAuth, useOperatorLoginMutation } from "@/queries/auth";
 
 const Screen = styled.main`
   display: flex;
@@ -65,8 +64,6 @@ const ErrorText = styled.p`
 
 const Footer = styled.div`
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
   margin-top: 20px;
   font-size: 13px;
   color: ${({ theme }) => theme.colors.textMuted};
@@ -94,7 +91,6 @@ export function AdminLoginForm() {
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -144,26 +140,12 @@ export function AdminLoginForm() {
           <Button type="submit" $size="lg" $block disabled={disabled}>
             로그인
           </Button>
-          <Button
-            $variant="secondary"
-            $block
-            disabled={disabled}
-            onClick={() => {
-              setValue("email", DEMO_OPERATOR.email);
-              setValue("password", DEMO_OPERATOR.password);
-              void submit();
-            }}
-          >
-            <ShieldCheck />
-            데모 운영자로 로그인
-          </Button>
         </Form>
         <Footer>
           <Link href="/login">
             <ArrowLeft />
             구성원 로그인
           </Link>
-          <span>{DEMO_OPERATOR.email}</span>
         </Footer>
       </Panel>
     </Screen>

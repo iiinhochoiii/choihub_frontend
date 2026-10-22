@@ -5,9 +5,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogoMark } from "@/components/common/LogoMark";
 import { transientOptions } from "@/components/ui";
-import { isMyTurn } from "@/lib/approval";
 import { mq } from "@/styles/theme";
-import { useCurrentUser, useData } from "@/lib/store";
+import { useApprovalPendingCount } from "@/queries/approval";
+import { useCurrentUser } from "@/queries/auth";
+import { useCompany } from "@/queries/directory";
 import { findActiveHref, NAV_SECTIONS } from "./navigation";
 
 const Aside = styled("aside", transientOptions)<{ $open: boolean }>`
@@ -132,12 +133,13 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { data } = useData();
+  const company = useCompany();
   const user = useCurrentUser();
+  const { data: pendingCount = 0 } = useApprovalPendingCount();
   const activeHref = findActiveHref(pathname);
 
   const badges: Record<string, number> = {
-    "/dashboard/approval": data.approvalDocs.filter((d) => isMyTurn(d, user.id)).length,
+    "/dashboard/approval": pendingCount,
   };
 
   return (
@@ -148,7 +150,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           <LogoMark size={30} />
           <div>
             <strong>ChoiHub</strong>
-            <small>{data.company.name}</small>
+            <small>{company.name}</small>
           </div>
         </Brand>
         <Nav>
@@ -177,7 +179,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             );
           })}
         </Nav>
-        <Footer>© {new Date().getFullYear()} {data.company.name}</Footer>
+        <Footer>© {new Date().getFullYear()} {company.name}</Footer>
       </Aside>
     </>
   );

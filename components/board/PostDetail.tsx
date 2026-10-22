@@ -3,23 +3,37 @@
 import styled from "@emotion/styled";
 import { CalendarDays, Eye, Heart, Pencil, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useState } from "react";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import {
+  ActionError,
   AdjacentNav,
   ArticleActions,
   ArticleBody,
   ArticleHeader,
   ArticleMeta,
   BackToList,
+  isNotFoundError,
   NotFoundArticle,
   useCountViewOnce,
 } from "@/components/articles/ArticleView";
-import { Button, ButtonLink, Card, ConfirmModal, Person, StatusBadge } from "@/components/ui";
+import {
+  Button,
+  ButtonLink,
+  Card,
+  ConfirmModal,
+  ErrorState,
+  LoadingState,
+  Person,
+  StatusBadge,
+} from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
 import { POST_CATEGORIES } from "@/lib/labels";
-import { getMember, getMemberSummary } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import { useDeletePost, usePost, useTogglePostLike, useViewPost } from "@/queries/posts";
 import { CommentSection } from "./CommentSection";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
 
 const LIST_HREF = "/dashboard/board";
 
@@ -65,56 +79,46 @@ const LikeButton = styled.button`
 
 export function PostDetail({ id }: { id: string }) {
   const router = useRouter();
-  const { data, update } = useData();
+  const { getMember, getMemberSummary } = useDirectory();
   const user = useCurrentUser();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const post = data.posts.find((p) => p.id === id);
+  const { data: post, isPending, error, refetch } = usePost(id);
+  const { mutate: viewPost } = useViewPost();
+  const toggleLike = useTogglePostLike(user.id);
+  const deletePost = useDeletePost();
 
-  const incrementViews = useCallback(
-    (postId: string) =>
-      update((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => (p.id === postId ? { ...p, views: p.views + 1 } : p)),
-      })),
-    [update],
-  );
-  useCountViewOnce(id, !!post, incrementViews);
+  // 조회수는 서버가 올린다. 글을 불러온 뒤 한 번만 요청한다.
+  useCountViewOnce(id, !!post, viewPost);
 
-  if (!post) {
+  if (isPending) {
     return (
       <>
         <BackToList href={LIST_HREF} label="게시판 목록" />
-        <NotFoundArticle listHref={LIST_HREF} label="목록으로 돌아가기" />
+        <LoadingState />
       </>
     );
   }
 
-  const ordered = [...data.posts].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const index = ordered.findIndex((p) => p.id === post.id);
-  const author = getMember(data, post.authorId);
+  if (error) {
+    return (
+      <>
+        <BackToList href={LIST_HREF} label="게시판 목록" />
+        {isNotFoundError(error) ? (
+          <NotFoundArticle listHref={LIST_HREF} label="목록으로 돌아가기" />
+        ) : (
+          <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+        )}
+      </>
+    );
+  }
+
+  const author = getMember(post.authorId);
   const isAuthor = post.authorId === user.id;
   const liked = post.likes.includes(user.id);
+  const actionError = toggleLike.error ?? deletePost.error;
 
-  const toggleLike = () =>
-    update((prev) => ({
-      ...prev,
-      posts: prev.posts.map((p) =>
-        p.id === post.id
-          ? {
-              ...p,
-              likes: p.likes.includes(user.id)
-                ? p.likes.filter((m) => m !== user.id)
-                : [...p.likes, user.id],
-            }
-          : p,
-      ),
-    }));
-
-  const handleDelete = () => {
-    update((prev) => ({ ...prev, posts: prev.posts.filter((p) => p.id !== post.id) }));
-    router.replace(LIST_HREF);
-  };
+  const handleDelete = () => deletePost.mutate(post.id, { onSuccess: () => router.replace(LIST_HREF) });
 
   return (
     <>
@@ -125,9 +129,9 @@ export function PostDetail({ id }: { id: string }) {
           <h1>{post.title}</h1>
           <ArticleMeta>
             <Person
-              name={author?.name ?? "알 수 없음"}
+              name={author?.name ?? UNKNOWN_MEMBER_NAME}
               color={author?.color}
-              caption={getMemberSummary(data, post.authorId)}
+              caption={getMemberSummary(post.authorId)}
             />
             <span>
               <CalendarDays />
@@ -144,7 +148,12 @@ export function PostDetail({ id }: { id: string }) {
         <ArticleBody>{post.content}</ArticleBody>
 
         <LikeArea>
-          <LikeButton type="button" aria-pressed={liked} onClick={toggleLike}>
+          <LikeButton
+            type="button"
+            aria-pressed={liked}
+            disabled={toggleLike.isPending}
+            onClick={() => toggleLike.mutate(post.id)}
+          >
             <Heart />
             좋아요 {post.likes.length}
           </LikeButton>
@@ -158,17 +167,23 @@ export function PostDetail({ id }: { id: string }) {
                 수정
               </ButtonLink>
             )}
-            <Button $variant="danger" $size="sm" onClick={() => setConfirmOpen(true)}>
+            <Button
+              $variant="danger"
+              $size="sm"
+              disabled={deletePost.isPending}
+              onClick={() => setConfirmOpen(true)}
+            >
               <Trash2 />
               삭제
             </Button>
           </ArticleActions>
         )}
+        {actionError && <ActionError role="alert">{getErrorMessage(actionError)}</ActionError>}
       </Card>
 
       <CommentSection post={post} />
 
-      <AdjacentNav basePath={LIST_HREF} prev={ordered[index - 1]} next={ordered[index + 1]} />
+      <AdjacentNav basePath={LIST_HREF} prev={post.prev} next={post.next} />
 
       <ConfirmModal
         open={confirmOpen}

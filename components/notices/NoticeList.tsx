@@ -4,12 +4,15 @@ import styled from "@emotion/styled";
 import { Pin, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { paginate, Pagination, PAGE_SIZE } from "@/components/articles/Pagination";
+import { useState } from "react";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { Pagination } from "@/components/articles/Pagination";
 import {
   ButtonLink,
   ChipGroup,
   EmptyState,
+  ErrorState,
+  LoadingState,
   MutedCell,
   PageHeader,
   SearchInput,
@@ -21,9 +24,10 @@ import {
 } from "@/components/ui";
 import { formatDate, isWithinDays } from "@/lib/date";
 import { NOTICE_CATEGORIES } from "@/lib/labels";
-import { getMemberName } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { Notice, NoticeCategory } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import { useNotices } from "@/queries/notices";
+import type { NoticeCategory } from "@/types";
 
 type CategoryFilter = "all" | NoticeCategory;
 
@@ -72,45 +76,80 @@ const NewMark = styled.em`
   color: ${({ theme }) => theme.colors.primary};
 `;
 
-/** 고정 공지 먼저, 그다음 최신순 */
-export function sortNotices(notices: Notice[]): Notice[] {
-  return [...notices].sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.createdAt.localeCompare(a.createdAt);
-  });
-}
-
 export function NoticeList() {
   const router = useRouter();
-  const { data } = useData();
+  const { getMemberName } = useDirectory();
   const user = useCurrentUser();
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
 
-  const filtered = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    return sortNotices(
-      data.notices.filter(
-        (n) =>
-          (category === "all" || n.category === category) &&
-          (!keyword ||
-            n.title.toLowerCase().includes(keyword) ||
-            n.content.toLowerCase().includes(keyword)),
-      ),
-    );
-  }, [data.notices, category, query]);
+  // 페이지·분류·검색·정렬(고정 공지 먼저, 최신순)은 서버가 처리한다.
+  const { data, isPending, error, refetch } = useNotices({
+    page,
+    category: category === "all" ? undefined : category,
+    q: query.trim(),
+  });
 
-  const current = paginate(filtered, page);
-
+  const counts = data?.categoryCounts;
   const categoryItems = [
-    { value: "all" as const, label: "전체", count: data.notices.length },
+    { value: "all" as const, label: "전체", count: counts?.all ?? 0 },
     ...(Object.keys(NOTICE_CATEGORIES) as NoticeCategory[]).map((key) => ({
       value: key,
       label: NOTICE_CATEGORIES[key].label,
-      count: data.notices.filter((n) => n.category === key).length,
+      count: counts?.[key] ?? 0,
     })),
   ];
+
+  const renderTable = () => {
+    if (isPending) return <LoadingState />;
+    if (error) return <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />;
+    if (data.items.length === 0) {
+      return <EmptyState title="공지사항이 없습니다" description="검색어나 분류를 바꿔 보세요." />;
+    }
+    return (
+      <Table>
+        <thead>
+          <tr>
+            <th style={{ width: 72 }}>번호</th>
+            <th style={{ width: 90 }}>분류</th>
+            <th>제목</th>
+            <th style={{ width: 110 }}>작성자</th>
+            <th style={{ width: 110 }}>작성일</th>
+            <th style={{ width: 80 }}>조회</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.items.map((notice, index) => {
+            const RowTag = notice.pinned ? PinnedRow : "tr";
+            const number = data.total - ((data.page - 1) * data.pageSize + index);
+            return (
+              <RowTag
+                key={notice.id}
+                data-clickable="true"
+                onClick={() => router.push(`/dashboard/notices/${notice.id}`)}
+              >
+                <MutedCell>{notice.pinned ? "공지" : number}</MutedCell>
+                <td>
+                  <StatusBadge value={NOTICE_CATEGORIES[notice.category]} />
+                </td>
+                <TitleCell>
+                  <TitleLink href={`/dashboard/notices/${notice.id}`} onClick={(e) => e.stopPropagation()}>
+                    {notice.pinned && <Pin aria-label="고정" />}
+                    <span>{notice.title}</span>
+                    {isWithinDays(notice.createdAt, 3) && <NewMark>N</NewMark>}
+                  </TitleLink>
+                </TitleCell>
+                <td>{getMemberName(notice.authorId)}</td>
+                <MutedCell>{formatDate(notice.createdAt)}</MutedCell>
+                <MutedCell>{notice.views.toLocaleString()}</MutedCell>
+              </RowTag>
+            );
+          })}
+        </tbody>
+      </Table>
+    );
+  };
 
   return (
     <>
@@ -148,57 +187,11 @@ export function NoticeList() {
         />
       </Toolbar>
 
-      <TableWrap>
-        {filtered.length === 0 ? (
-          <EmptyState title="공지사항이 없습니다" description="검색어나 분류를 바꿔 보세요." />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <th style={{ width: 72 }}>번호</th>
-                <th style={{ width: 90 }}>분류</th>
-                <th>제목</th>
-                <th style={{ width: 110 }}>작성자</th>
-                <th style={{ width: 110 }}>작성일</th>
-                <th style={{ width: 80 }}>조회</th>
-              </tr>
-            </thead>
-            <tbody>
-              {current.items.map((notice, index) => {
-                const RowTag = notice.pinned ? PinnedRow : "tr";
-                const number = filtered.length - ((current.page - 1) * PAGE_SIZE + index);
-                return (
-                  <RowTag
-                    key={notice.id}
-                    data-clickable="true"
-                    onClick={() => router.push(`/dashboard/notices/${notice.id}`)}
-                  >
-                    <MutedCell>{notice.pinned ? "공지" : number}</MutedCell>
-                    <td>
-                      <StatusBadge value={NOTICE_CATEGORIES[notice.category]} />
-                    </td>
-                    <TitleCell>
-                      <TitleLink
-                        href={`/dashboard/notices/${notice.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {notice.pinned && <Pin aria-label="고정" />}
-                        <span>{notice.title}</span>
-                        {isWithinDays(notice.createdAt, 3) && <NewMark>N</NewMark>}
-                      </TitleLink>
-                    </TitleCell>
-                    <td>{getMemberName(data, notice.authorId)}</td>
-                    <MutedCell>{formatDate(notice.createdAt)}</MutedCell>
-                    <MutedCell>{notice.views.toLocaleString()}</MutedCell>
-                  </RowTag>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
-      </TableWrap>
+      <TableWrap>{renderTable()}</TableWrap>
 
-      <Pagination page={current.page} total={filtered.length} onChange={setPage} />
+      {data && (
+        <Pagination page={data.page} total={data.total} pageSize={data.pageSize} onChange={setPage} />
+      )}
     </>
   );
 }

@@ -7,11 +7,12 @@ import {
   Badge,
   Button,
   ButtonLink,
-  ConfirmModal,
   EmptyState,
+  ErrorState,
   Field,
   IconButton,
   Input,
+  LoadingState,
   Modal,
   MutedCell,
   Notice,
@@ -20,9 +21,15 @@ import {
   Table,
   TableWrap,
 } from "@/components/ui";
-import { nowTime, todayKey } from "@/lib/date";
-import { useData } from "@/lib/store";
-import type { Reservation, Room } from "@/lib/types";
+import { ApiError, getErrorMessage } from "@/apis/defaultInstance";
+import {
+  useActivateRoom,
+  useDeactivateRoom,
+  useDeleteRoom,
+  useReorderRooms,
+  useRooms,
+} from "@/queries/reservations";
+import type { Room } from "@/types";
 import { RoomFormModal } from "./RoomFormModal";
 
 const NameCell = styled.td`
@@ -44,59 +51,62 @@ const MutedSmall = styled.small`
   color: ${({ theme }) => theme.colors.textMuted};
 `;
 
-/** 아직 끝나지 않은 예약 (오늘 이후 + 오늘 중 종료 전) */
-function isUpcoming(reservation: Reservation, today: string, now: string): boolean {
-  return reservation.date > today || (reservation.date === today && reservation.endTime > now);
-}
+const ErrorText = styled.p`
+  margin-top: 12px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
 
 type FormState = { mode: "create" } | { mode: "edit"; room: Room } | null;
 
 export function RoomManager() {
-  const { data, update } = useData();
+  const { data: rooms, isPending, error, refetch } = useRooms();
+  const reorderRooms = useReorderRooms();
+  const activateRoom = useActivateRoom();
+  const deactivateRoom = useDeactivateRoom();
+  const deleteRoom = useDeleteRoom();
   const [form, setForm] = useState<FormState>(null);
   const [deactivating, setDeactivating] = useState<Room | null>(null);
   const [reason, setReason] = useState("");
   const [deleting, setDeleting] = useState<Room | null>(null);
-  const [blockedDelete, setBlockedDelete] = useState<{ room: Room; count: number } | null>(null);
+  /** 앞으로 잡힌 예약이 있어 삭제가 막힌 회의실과 서버 안내 문구 */
+  const [blockedDelete, setBlockedDelete] = useState<{ room: Room; message: string } | null>(null);
 
-  const today = todayKey();
-  const now = nowTime();
-  const upcomingCount = (roomId: string) =>
-    data.reservations.filter((r) => r.roomId === roomId && isUpcoming(r, today, now)).length;
-
+  /** 순서 변경은 화면에 먼저 반영하고(낙관적 업데이트) 실패하면 되돌린다. */
   const move = (index: number, direction: -1 | 1) => {
-    update((prev) => {
-      const rooms = [...prev.rooms];
-      const target = index + direction;
-      if (target < 0 || target >= rooms.length) return prev;
-      [rooms[index], rooms[target]] = [rooms[target], rooms[index]];
-      return { ...prev, rooms };
+    if (!rooms) return;
+    const target = index + direction;
+    if (target < 0 || target >= rooms.length) return;
+    const ids = rooms.map((room) => room.id);
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    reorderRooms.mutate(ids, { onError: (err) => window.alert(getErrorMessage(err)) });
+  };
+
+  const activate = (room: Room) =>
+    activateRoom.mutate(room.id, { onError: (err) => window.alert(getErrorMessage(err)) });
+
+  const openDeactivate = (room: Room) => {
+    setReason("");
+    deactivateRoom.reset();
+    setDeactivating(room);
+  };
+
+  const closeDelete = () => {
+    setDeleting(null);
+    deleteRoom.reset();
+  };
+
+  // 끝나지 않은 예약이 있으면 서버가 409로 막는다. 사용 중지를 안내하는 창으로 바꿔 보여 준다.
+  const remove = (room: Room) =>
+    deleteRoom.mutate(room.id, {
+      onSuccess: closeDelete,
+      onError: (err) => {
+        if (err instanceof ApiError && err.status === 409) {
+          closeDelete();
+          setBlockedDelete({ room, message: err.message });
+        }
+      },
     });
-  };
-
-  const setActive = (roomId: string, active: boolean, inactiveReason?: string) => {
-    update((prev) => ({
-      ...prev,
-      rooms: prev.rooms.map((r) =>
-        r.id === roomId ? { ...r, active, inactiveReason: active ? undefined : inactiveReason } : r,
-      ),
-    }));
-  };
-
-  const requestDelete = (room: Room) => {
-    const count = upcomingCount(room.id);
-    if (count > 0) setBlockedDelete({ room, count });
-    else setDeleting(room);
-  };
-
-  const remove = (room: Room) => {
-    update((prev) => ({
-      ...prev,
-      rooms: prev.rooms.filter((r) => r.id !== room.id),
-      // 지난 예약 기록에는 회의실 이름을 남겨 둔다.
-      reservations: prev.reservations.map((r) => (r.roomId === room.id ? { ...r, roomName: room.name } : r)),
-    }));
-  };
 
   return (
     <>
@@ -125,7 +135,11 @@ export function RoomManager() {
         </span>
       </Notice>
 
-      {data.rooms.length === 0 ? (
+      {isPending ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+      ) : rooms.length === 0 ? (
         <EmptyState
           title="등록된 회의실이 없습니다"
           description="회의실을 추가하면 구성원이 예약할 수 있습니다."
@@ -146,22 +160,23 @@ export function RoomManager() {
                 <th>수용 인원</th>
                 <th>장비</th>
                 <th>상태</th>
-                <th>예정 예약</th>
                 <th style={{ width: 150 }}>관리</th>
               </tr>
             </thead>
             <tbody>
-              {data.rooms.map((room, index) => (
+              {rooms.map((room, index) => (
                 <tr key={room.id}>
                   <td>
                     <Row $gap={0} $wrap={false}>
-                      <IconButton $size={28} aria-label="위로" disabled={index === 0} onClick={() => move(index, -1)}>
+                      <IconButton $size={28} aria-label="위로" disabled={index === 0 || reorderRooms.isPending}
+                        onClick={() => move(index, -1)}
+                      >
                         <ArrowUp />
                       </IconButton>
                       <IconButton
                         $size={28}
                         aria-label="아래로"
-                        disabled={index === data.rooms.length - 1}
+                        disabled={index === rooms.length - 1 || reorderRooms.isPending}
                         onClick={() => move(index, 1)}
                       >
                         <ArrowDown />
@@ -186,7 +201,6 @@ export function RoomManager() {
                       </span>
                     )}
                   </td>
-                  <td>{upcomingCount(room.id)}건</td>
                   <td>
                     <Row $gap={0} $wrap={false}>
                       <IconButton aria-label={`${room.name} 수정`} title="수정" onClick={() => setForm({ mode: "edit", room })}>
@@ -195,18 +209,12 @@ export function RoomManager() {
                       <IconButton
                         aria-label={room.active ? `${room.name} 사용 중지` : `${room.name} 사용 재개`}
                         title={room.active ? "사용 중지" : "사용 재개"}
-                        onClick={() => {
-                          if (room.active) {
-                            setReason("");
-                            setDeactivating(room);
-                          } else {
-                            setActive(room.id, true);
-                          }
-                        }}
+                        disabled={!room.active && activateRoom.isPending}
+                        onClick={() => (room.active ? openDeactivate(room) : activate(room))}
                       >
                         <Power />
                       </IconButton>
-                      <IconButton aria-label={`${room.name} 삭제`} title="삭제" onClick={() => requestDelete(room)}>
+                      <IconButton aria-label={`${room.name} 삭제`} title="삭제" onClick={() => setDeleting(room)}>
                         <Trash2 />
                       </IconButton>
                     </Row>
@@ -234,10 +242,14 @@ export function RoomManager() {
             </Button>
             <Button
               $variant="danger"
-              onClick={() => {
-                if (deactivating) setActive(deactivating.id, false, reason.trim() || undefined);
-                setDeactivating(null);
-              }}
+              disabled={deactivateRoom.isPending}
+              onClick={() =>
+                deactivating &&
+                deactivateRoom.mutate(
+                  { id: deactivating.id, reason: reason.trim() || undefined },
+                  { onSuccess: () => setDeactivating(null) },
+                )
+              }
             >
               사용 중지
             </Button>
@@ -247,9 +259,8 @@ export function RoomManager() {
         {deactivating && (
           <>
             <p style={{ marginBottom: 16 }}>
-              <strong>{deactivating.name}</strong>의 새 예약을 받지 않습니다.
-              {upcomingCount(deactivating.id) > 0 &&
-                ` 이미 잡힌 예약 ${upcomingCount(deactivating.id)}건은 그대로 유지되니 예약자에게 따로 안내해 주세요.`}
+              <strong>{deactivating.name}</strong>의 새 예약을 받지 않습니다. 이미 잡힌 예약은 그대로 유지되니
+              예약자에게 따로 안내해 주세요.
             </p>
             <Field label="사유" hint="예약 화면에 함께 표시됩니다.">
               {(id) => (
@@ -265,15 +276,31 @@ export function RoomManager() {
         )}
       </Modal>
 
-      <ConfirmModal
+      <Modal
         open={deleting !== null}
         title="회의실 삭제"
-        message={`${deleting?.name ?? ""}을(를) 삭제합니다.\n지난 예약 기록은 회의실 이름과 함께 남습니다.`}
-        confirmLabel="삭제"
-        danger
-        onClose={() => setDeleting(null)}
-        onConfirm={() => deleting && remove(deleting)}
-      />
+        width={400}
+        onClose={closeDelete}
+        footer={
+          <>
+            <Button $variant="secondary" onClick={closeDelete}>
+              취소
+            </Button>
+            <Button
+              $variant="danger"
+              disabled={deleteRoom.isPending}
+              onClick={() => deleting && remove(deleting)}
+            >
+              삭제
+            </Button>
+          </>
+        }
+      >
+        <p style={{ whiteSpace: "pre-line" }}>
+          {`${deleting?.name ?? ""}을(를) 삭제합니다.\n지난 예약 기록은 회의실 이름과 함께 남습니다.`}
+        </p>
+        {deleteRoom.error && <ErrorText role="alert">{getErrorMessage(deleteRoom.error)}</ErrorText>}
+      </Modal>
 
       <Modal
         open={blockedDelete !== null}
@@ -288,8 +315,7 @@ export function RoomManager() {
             {blockedDelete?.room.active && (
               <Button
                 onClick={() => {
-                  setReason("");
-                  setDeactivating(blockedDelete.room);
+                  openDeactivate(blockedDelete.room);
                   setBlockedDelete(null);
                 }}
               >
@@ -299,12 +325,7 @@ export function RoomManager() {
           </>
         }
       >
-        {blockedDelete && (
-          <p>
-            <strong>{blockedDelete.room.name}</strong>에 앞으로 잡힌 예약이 {blockedDelete.count}건 있습니다. 먼저 사용
-            중지해 새 예약을 막고, 예약이 모두 끝나거나 취소된 뒤 삭제하세요.
-          </p>
-        )}
+        {blockedDelete && <p>{blockedDelete.message}</p>}
       </Modal>
     </>
   );

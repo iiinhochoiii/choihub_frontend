@@ -7,8 +7,9 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { LogoMark } from "@/components/common/LogoMark";
 import { ShellLoading } from "@/components/layout/DashboardShell";
-import { Button } from "@/components/ui";
-import { useOperatorAuth } from "@/lib/store";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { Button, ErrorState } from "@/components/ui";
+import { useOperatorAuth } from "@/queries/auth";
 import { mq } from "@/styles/theme";
 
 const Header = styled.header`
@@ -118,12 +119,13 @@ const Content = styled.main`
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { ready, operator, logout } = useOperatorAuth();
+  const { ready, error, retry, operator, logout } = useOperatorAuth();
 
   useEffect(() => {
-    if (ready && !operator) router.replace("/admin/login");
-  }, [ready, operator, router]);
+    if (ready && !error && !operator) router.replace("/admin/login");
+  }, [ready, error, operator, router]);
 
+  if (ready && error) return <ErrorState message={getErrorMessage(error)} onRetry={retry} />;
   if (!ready || !operator) return <ShellLoading aria-label="불러오는 중" />;
 
   return (

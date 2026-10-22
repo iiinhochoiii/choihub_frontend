@@ -5,13 +5,12 @@ import { EmptyState, MutedCell, StatusBadge, Table, TableWrap, TitleCell } from 
 import { getCurrentStep } from "@/lib/approval";
 import { formatDate } from "@/lib/date";
 import { APPROVAL_DOC_STATUS } from "@/lib/labels";
-import { getMemberName } from "@/lib/selectors";
-import { useData } from "@/lib/store";
-import type { ApprovalDocument } from "@/lib/types";
+import { useDirectory } from "@/queries/directory";
+import type { ApprovalDocument } from "@/types";
 
 export function ApprovalTable({ docs, emptyText }: { docs: ApprovalDocument[]; emptyText: string }) {
   const router = useRouter();
-  const { data } = useData();
+  const { getMemberName } = useDirectory();
 
   if (docs.length === 0) {
     return (
@@ -47,12 +46,12 @@ export function ApprovalTable({ docs, emptyText }: { docs: ApprovalDocument[]; e
                 <MutedCell>{doc.docNumber}</MutedCell>
                 <td>{doc.formName}</td>
                 <TitleCell $maxWidth={320}>{doc.title}</TitleCell>
-                <td>{getMemberName(data, doc.drafterId)}</td>
+                <td>{getMemberName(doc.drafterId)}</td>
                 <MutedCell>{formatDate(doc.createdAt)}</MutedCell>
                 <td>
                   <StatusBadge value={APPROVAL_DOC_STATUS[doc.status]} />
                 </td>
-                <td>{current ? getMemberName(data, current.approverId) : "-"}</td>
+                <td>{current ? getMemberName(current.approverId) : "-"}</td>
               </tr>
             );
           })}

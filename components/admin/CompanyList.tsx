@@ -3,11 +3,13 @@
 import styled from "@emotion/styled";
 import { Building2, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Badge,
   ButtonLink,
   EmptyState,
+  ErrorState,
+  LoadingState,
   MutedCell,
   PageHeader,
   SearchInput,
@@ -15,9 +17,9 @@ import {
   TableWrap,
   Toolbar,
 } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { formatDate } from "@/lib/date";
-import { usePlatform } from "@/lib/store";
-import type { Tenant } from "@/lib/types";
+import { useTenants } from "@/queries/admin";
 import { mq } from "@/styles/theme";
 
 const Stats = styled.div`
@@ -67,28 +69,23 @@ const NameCell = styled.td`
   }
 `;
 
-function managersOf(tenant: Tenant) {
-  return tenant.data.members.filter((m) => m.role === "manager");
-}
+/** 입력이 멈춘 뒤에 서버 검색을 요청한다. */
+const SEARCH_DEBOUNCE_MS = 300;
 
 export function CompanyList() {
   const router = useRouter();
-  const { platform } = usePlatform();
   const [query, setQuery] = useState("");
+  const [keyword, setKeyword] = useState("");
 
-  const tenants = [...platform.tenants].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const keyword = query.trim().toLowerCase();
-  const filtered = keyword
-    ? tenants.filter((t) =>
-        [t.data.company.name, t.data.company.businessNumber, t.data.company.ceo, ...managersOf(t).map((m) => m.email)]
-          .join(" ")
-          .toLowerCase()
-          .includes(keyword),
-      )
-    : tenants;
+  useEffect(() => {
+    const timer = setTimeout(() => setKeyword(query.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
 
-  const activeCount = tenants.filter((t) => t.status === "active").length;
-  const memberCount = tenants.reduce((sum, t) => sum + t.data.members.length, 0);
+  // 검색·정렬(최근 등록 순)·통계는 서버가 처리한다.
+  const { data, isPending, error, refetch } = useTenants(keyword);
+  const stats = data?.stats;
+  const tenants = data?.items ?? [];
 
   return (
     <>
@@ -106,19 +103,19 @@ export function CompanyList() {
       <Stats>
         <div>
           <small>전체 회사</small>
-          <strong>{tenants.length}</strong>
+          <strong>{stats?.total ?? "-"}</strong>
         </div>
         <div>
           <small>이용 중</small>
-          <strong>{activeCount}</strong>
+          <strong>{stats?.active ?? "-"}</strong>
         </div>
         <div>
           <small>이용 정지</small>
-          <strong>{tenants.length - activeCount}</strong>
+          <strong>{stats?.suspended ?? "-"}</strong>
         </div>
         <div>
           <small>전체 구성원</small>
-          <strong>{memberCount}</strong>
+          <strong>{stats?.members ?? "-"}</strong>
         </div>
       </Stats>
 
@@ -132,7 +129,11 @@ export function CompanyList() {
         />
       </Toolbar>
 
-      {filtered.length === 0 ? (
+      {isPending ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+      ) : tenants.length === 0 ? (
         <EmptyState
           icon={<Building2 />}
           title={keyword ? "검색 결과가 없습니다" : "등록된 회사가 없습니다"}
@@ -153,21 +154,21 @@ export function CompanyList() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((tenant) => {
-                const managers = managersOf(tenant);
+              {tenants.map((tenant) => {
+                const managers = tenant.managerEmails;
                 return (
                   <tr key={tenant.id} data-clickable="true" onClick={() => router.push(`/admin/companies/${tenant.id}`)}>
                     <NameCell>
-                      <strong>{tenant.data.company.name}</strong>
-                      <small>{tenant.data.company.email}</small>
+                      <strong>{tenant.company.name}</strong>
+                      <small>{tenant.company.email}</small>
                     </NameCell>
-                    <td>{tenant.data.company.businessNumber}</td>
-                    <td>{tenant.data.company.ceo}</td>
+                    <td>{tenant.company.businessNumber}</td>
+                    <td>{tenant.company.ceo}</td>
                     <MutedCell>
-                      {managers[0]?.email ?? "-"}
+                      {managers[0] ?? "-"}
                       {managers.length > 1 && ` 외 ${managers.length - 1}명`}
                     </MutedCell>
-                    <td>{tenant.data.members.length}명</td>
+                    <td>{tenant.memberCount}명</td>
                     <td>
                       {tenant.status === "active" ? (
                         <Badge $tone="success">이용 중</Badge>

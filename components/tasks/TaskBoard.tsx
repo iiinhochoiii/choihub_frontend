@@ -6,8 +6,8 @@ import { useState } from "react";
 import { Avatar, Badge, StatusBadge, transientOptions } from "@/components/ui";
 import { formatMonthDay, todayKey } from "@/lib/date";
 import { TASK_PRIORITY, TASK_STATUS } from "@/lib/labels";
-import { getMember } from "@/lib/selectors";
-import type { GroupwareData, Task, TaskStatus } from "@/lib/types";
+import { useDirectory } from "@/queries/directory";
+import type { Task, TaskStatus } from "@/types";
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 } as const;
 
@@ -121,14 +121,14 @@ export function isOverdue(task: Task): boolean {
 }
 
 interface TaskBoardProps {
-  data: GroupwareData;
   tasks: Task[];
   canEdit: (task: Task) => boolean;
   onOpen: (task: Task) => void;
   onMove: (taskId: string, status: TaskStatus) => void;
 }
 
-export function TaskBoard({ data, tasks, canEdit, onOpen, onMove }: TaskBoardProps) {
+export function TaskBoard({ tasks, canEdit, onOpen, onMove }: TaskBoardProps) {
+  const { getMember } = useDirectory();
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overStatus, setOverStatus] = useState<TaskStatus | null>(null);
 
@@ -174,7 +174,7 @@ export function TaskBoard({ data, tasks, canEdit, onOpen, onMove }: TaskBoardPro
             {items.length === 0 && <EmptyColumn>업무가 없습니다</EmptyColumn>}
 
             {items.map((task) => {
-              const assignee = getMember(data, task.assigneeId);
+              const assignee = getMember(task.assigneeId);
               const draggable = canEdit(task);
               const overdue = isOverdue(task);
               return (
@@ -197,7 +197,9 @@ export function TaskBoard({ data, tasks, canEdit, onOpen, onMove }: TaskBoardPro
                 >
                   <strong>{task.title}</strong>
                   <CardMeta>
-                    <Badge $tone={TASK_PRIORITY[task.priority].tone}>{TASK_PRIORITY[task.priority].label}</Badge>
+                    <Badge $tone={TASK_PRIORITY[task.priority].tone}>
+                      {TASK_PRIORITY[task.priority].label}
+                    </Badge>
                     {task.dueDate && (
                       <Due $overdue={overdue}>
                         <CalendarClock />

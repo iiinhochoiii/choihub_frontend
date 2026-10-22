@@ -16,18 +16,25 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { formatDateTime, todayKey } from "@/lib/date";
-import { createId } from "@/lib/id";
+import { setServerErrors } from "@/lib/form";
 import { TASK_PRIORITY, TASK_STATUS } from "@/lib/labels";
 import { type TaskFormValues, taskSchema } from "@/lib/schemas/task";
-import { getMemberName } from "@/lib/selectors";
-import { useData } from "@/lib/store";
-import type { Task, TaskPriority, TaskStatus } from "@/lib/types";
+import { useDirectory } from "@/queries/directory";
+import { useCreateTask, useDeleteTask, useUpdateTask } from "@/queries/tasks";
+import type { Task, TaskPriority, TaskStatus } from "@/types";
 
 const Meta = styled.p`
   margin-top: 16px;
   font-size: 12px;
   color: ${({ theme }) => theme.colors.textSubtle};
+`;
+
+const ErrorText = styled.p`
+  margin-top: 12px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
 `;
 
 const Spacer = styled.span`
@@ -43,13 +50,18 @@ interface Props {
 }
 
 export function TaskFormModal({ task, currentUserId, canEdit, onClose }: Props) {
-  const { data, update } = useData();
+  const { members: allMembers, getMemberName } = useDirectory();
+  const createTask = useCreateTask();
+  const updateTask = useUpdateTask();
+  const deleteTask = useDeleteTask();
   const isNew = task === null;
   const readOnly = !isNew && !canEdit;
 
   const {
     register,
     handleSubmit,
+    setError,
+    clearErrors,
     formState: { errors },
   } = useForm<TaskFormValues>({
     resolver: zodResolver(taskSchema),
@@ -64,32 +76,30 @@ export function TaskFormModal({ task, currentUserId, canEdit, onClose }: Props) 
   });
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const submit = handleSubmit((values) => {
+  const saving = createTask.isPending || updateTask.isPending || deleteTask.isPending;
+
+  const submit = handleSubmit(async (values) => {
     if (readOnly) return;
-    update((prev) => ({
-      ...prev,
-      tasks: task
-        ? prev.tasks.map((t) => (t.id === task.id ? { ...t, ...values } : t))
-        : [
-            ...prev.tasks,
-            {
-              ...values,
-              id: createId("t"),
-              createdBy: currentUserId,
-              createdAt: new Date().toISOString(),
-            },
-          ],
-    }));
-    onClose();
+    try {
+      // dueDate가 ""이면 기한 없음
+      if (task) await updateTask.mutateAsync({ id: task.id, body: values });
+      else await createTask.mutateAsync(values);
+      onClose();
+    } catch (error) {
+      if (!setServerErrors(error, setError)) setError("root", { message: getErrorMessage(error) });
+    }
   });
 
   const handleDelete = () => {
     if (!task) return;
-    update((prev) => ({ ...prev, tasks: prev.tasks.filter((t) => t.id !== task.id) }));
-    onClose();
+    clearErrors("root");
+    deleteTask.mutate(task.id, {
+      onSuccess: onClose,
+      onError: (error) => setError("root", { message: getErrorMessage(error) }),
+    });
   };
 
-  const members = [...data.members].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  const members = [...allMembers].sort((a, b) => a.name.localeCompare(b.name, "ko"));
 
   return (
     <>
@@ -106,7 +116,7 @@ export function TaskFormModal({ task, currentUserId, canEdit, onClose }: Props) 
           ) : (
             <>
               {!isNew && (
-                <Button $variant="ghost" onClick={() => setConfirmDelete(true)}>
+                <Button $variant="ghost" disabled={saving} onClick={() => setConfirmDelete(true)}>
                   <Trash2 />
                   삭제
                 </Button>
@@ -115,7 +125,7 @@ export function TaskFormModal({ task, currentUserId, canEdit, onClose }: Props) 
               <Button $variant="secondary" onClick={onClose}>
                 취소
               </Button>
-              <Button type="submit" form="task-form">
+              <Button type="submit" form="task-form" disabled={saving}>
                 {isNew ? "추가" : "저장"}
               </Button>
             </>
@@ -145,7 +155,7 @@ export function TaskFormModal({ task, currentUserId, canEdit, onClose }: Props) 
                   )}
                 </Field>
               </div>
-              <Field label="담당자" required>
+              <Field label="담당자" required error={errors.assigneeId?.message}>
                 {(id) => (
                   <Select id={id} {...register("assigneeId")}>
                     {members.map((m) => (
@@ -178,15 +188,16 @@ export function TaskFormModal({ task, currentUserId, canEdit, onClose }: Props) 
                   </Select>
                 )}
               </Field>
-              <Field label="마감일">
+              <Field label="마감일" error={errors.dueDate?.message}>
                 {(id) => <Input id={id} type="date" {...register("dueDate")} />}
               </Field>
             </FormGrid>
           </fieldset>
+          {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
         </form>
         {task && (
           <Meta>
-            {getMemberName(data, task.createdBy)} 님이 {formatDateTime(task.createdAt)}에 등록
+            {getMemberName(task.createdBy)} 님이 {formatDateTime(task.createdAt)}에 등록
           </Meta>
         )}
       </Modal>

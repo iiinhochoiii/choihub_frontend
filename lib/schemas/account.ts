@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { MEMBER_STATUS } from "@/lib/labels";
-import type { MemberStatus } from "@/lib/types";
+import type { MemberStatus } from "@/types";
 
 const PASSWORD_MIN_LENGTH = 8;
 
 /**
  * 첫 로그인 시 초기 비밀번호 변경.
- * 초기 비밀번호와 같은지는 현재 사용자와 비교해야 하므로 제출 시점에 검사한다.
+ * 초기 비밀번호와 같은지는 서버가 검사한다.
  */
 export const initialPasswordSchema = z
   .object({
@@ -19,7 +19,7 @@ export type InitialPasswordFormValues = z.infer<typeof initialPasswordSchema>;
 
 /**
  * 내 정보 화면의 비밀번호 변경.
- * 현재 비밀번호 일치 여부는 현재 사용자와 비교해야 하므로 제출 시점에 검사한다.
+ * 현재 비밀번호 일치 여부는 서버가 검사한다.
  */
 export const passwordChangeSchema = z
   .object({

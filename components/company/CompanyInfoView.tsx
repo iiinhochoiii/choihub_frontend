@@ -2,7 +2,7 @@
 
 import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CheckCircle2, Lock, Pencil } from "lucide-react";
+import { AlertCircle, CheckCircle2, Lock, Pencil } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import {
@@ -17,15 +17,17 @@ import {
   PageHeader,
   Stack,
 } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { COMPANY_SECTIONS as SECTIONS } from "@/lib/company";
-import { isBusinessNumberTaken } from "@/lib/platform";
+import { setServerErrors } from "@/lib/form";
 import {
   type CompanyFormInput,
   type CompanyFormValues,
   companySchema,
   toCompanyFormInput,
 } from "@/lib/schemas/company";
-import { useCurrentUser, useData, usePlatform } from "@/lib/store";
+import { useCurrentUser } from "@/queries/auth";
+import { useCompany, useUpdateCompany } from "@/queries/directory";
 
 const ReadValue = styled.p`
   min-height: 38px;
@@ -45,11 +47,12 @@ const Success = styled(Notice)`
 `;
 
 export function CompanyInfoView() {
-  const { data, tenantId, update } = useData();
-  const { platform } = usePlatform();
+  const company = useCompany();
+  const updateCompany = useUpdateCompany();
   const user = useCurrentUser();
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -58,23 +61,28 @@ export function CompanyInfoView() {
     formState: { errors },
   } = useForm<CompanyFormInput, unknown, CompanyFormValues>({
     resolver: zodResolver(companySchema),
-    defaultValues: toCompanyFormInput(data.company),
+    defaultValues: toCompanyFormInput(company),
   });
 
   const startEdit = () => {
-    reset(toCompanyFormInput(data.company));
+    reset(toCompanyFormInput(company));
     setSaved(false);
+    setSaveError(null);
     setEditing(true);
   };
 
   const handleSave = handleSubmit((values) => {
-    if (isBusinessNumberTaken(platform, values.businessNumber, tenantId)) {
-      return setError("businessNumber", { message: "ChoiHub에 이미 등록된 사업자등록번호입니다." });
-    }
-
-    update((prev) => ({ ...prev, company: values }));
-    setEditing(false);
-    setSaved(true);
+    setSaveError(null);
+    // 사업자번호 중복은 서버가 검사한다.
+    updateCompany.mutate(values, {
+      onSuccess: () => {
+        setEditing(false);
+        setSaved(true);
+      },
+      onError: (error) => {
+        if (!setServerErrors(error, setError)) setSaveError(getErrorMessage(error));
+      },
+    });
   });
 
   return (
@@ -89,7 +97,9 @@ export function CompanyInfoView() {
               <Button $variant="secondary" onClick={() => setEditing(false)}>
                 취소
               </Button>
-              <Button type="submit">저장</Button>
+              <Button type="submit" disabled={updateCompany.isPending}>
+                저장
+              </Button>
             </>
           ) : (
             <Button onClick={startEdit}>
@@ -104,6 +114,12 @@ export function CompanyInfoView() {
         <Notice>
           <Lock />
           회사정보는 매니저만 변경할 수 있습니다.
+        </Notice>
+      )}
+      {saveError && editing && (
+        <Notice $tone="warning">
+          <AlertCircle />
+          {saveError}
         </Notice>
       )}
       {saved && !editing && (
@@ -141,8 +157,8 @@ export function CompanyInfoView() {
                       ) : (
                         <ReadValue id={id}>
                           {field.key === "defaultAnnualLeave"
-                            ? `${data.company.defaultAnnualLeave}일`
-                            : String(data.company[field.key])}
+                            ? `${company.defaultAnnualLeave}일`
+                            : String(company[field.key])}
                         </ReadValue>
                       )
                     }

@@ -4,9 +4,9 @@ import styled from "@emotion/styled";
 import { transientOptions } from "@/components/ui";
 import { formatDate } from "@/lib/date";
 import { APPROVAL_STEP_STATUS } from "@/lib/labels";
-import { getMember } from "@/lib/selectors";
-import { useData } from "@/lib/store";
-import type { ApprovalStep } from "@/lib/types";
+import { useDirectory } from "@/queries/directory";
+import type { ApprovalStep } from "@/types";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
 
 const Line = styled.div`
   display: flex;
@@ -86,8 +86,8 @@ interface ApprovalLineProps {
 
 /** 결재란(도장 박스). 기안자 + 결재자 순서로 표시 */
 export function ApprovalLine({ drafterId, draftedAt, steps }: ApprovalLineProps) {
-  const { data } = useData();
-  const drafter = getMember(data, drafterId);
+  const { getMember } = useDirectory();
+  const drafter = getMember(drafterId);
 
   return (
     <Line>
@@ -97,12 +97,12 @@ export function ApprovalLine({ drafterId, draftedAt, steps }: ApprovalLineProps)
           <span>기안</span>
         </Stamp>
         <BoxFoot>
-          <strong>{drafter?.name ?? "알 수 없음"}</strong>
+          <strong>{drafter?.name ?? UNKNOWN_MEMBER_NAME}</strong>
           <small>{draftedAt ? formatDate(draftedAt) : drafter?.position}</small>
         </BoxFoot>
       </Box>
       {steps.map((step, index) => {
-        const member = getMember(data, step.approverId);
+        const member = getMember(step.approverId);
         return (
           <Box key={`${step.approverId}-${index}`}>
             <BoxHead>결재 {index + 1}</BoxHead>
@@ -110,7 +110,7 @@ export function ApprovalLine({ drafterId, draftedAt, steps }: ApprovalLineProps)
               <span>{APPROVAL_STEP_STATUS[step.status].label}</span>
             </Stamp>
             <BoxFoot>
-              <strong>{member?.name ?? "알 수 없음"}</strong>
+              <strong>{member?.name ?? UNKNOWN_MEMBER_NAME}</strong>
               <small>{step.actedAt ? formatDate(step.actedAt) : member?.position}</small>
             </BoxFoot>
           </Box>

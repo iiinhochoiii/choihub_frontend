@@ -2,8 +2,9 @@
 
 import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import {
   ButtonLink,
   Button,
@@ -16,6 +17,7 @@ import {
   Stack,
   Textarea,
 } from "@/components/ui";
+import { setServerErrors } from "@/lib/form";
 import { type ArticleFormValues, createArticleSchema, TITLE_MAX } from "@/lib/schemas/article";
 
 interface ArticleFormProps<C extends string> {
@@ -25,8 +27,15 @@ interface ArticleFormProps<C extends string> {
   showPinned?: boolean;
   submitLabel: string;
   cancelHref: string;
-  onSubmit: (values: ArticleFormValues<C>) => void;
+  /** 저장 요청. 실패하면 던진 오류를 필드 오류 또는 폼 하단 메시지로 보여 준다. */
+  onSubmit: (values: ArticleFormValues<C>) => Promise<unknown>;
 }
+
+const FormError = styled.p`
+  flex: 1;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
 
 const ContentArea = styled(Textarea)`
   min-height: 320px;
@@ -54,15 +63,24 @@ export function ArticleForm<C extends string>({
     register,
     control,
     handleSubmit,
-    formState: { errors },
+    setError,
+    formState: { errors, isSubmitting },
   } = useForm<ArticleFormValues>({
     resolver: zodResolver(schema),
     defaultValues: initial,
   });
   const title = useWatch({ control, name: "title" });
+  const [formError, setFormError] = useState("");
 
   // 분류는 스키마가 categories로 검사하므로 C로 좁혀도 안전하다.
-  const submit = handleSubmit((values) => onSubmit(values as ArticleFormValues<C>));
+  const submit = handleSubmit(async (values) => {
+    setFormError("");
+    try {
+      await onSubmit(values as ArticleFormValues<C>);
+    } catch (error) {
+      if (!setServerErrors(error, setError)) setFormError(getErrorMessage(error));
+    }
+  });
 
   return (
     <form onSubmit={submit} noValidate>
@@ -110,10 +128,13 @@ export function ArticleForm<C extends string>({
           </Field>
 
           <Row $justify="flex-end">
+            {formError && <FormError role="alert">{formError}</FormError>}
             <ButtonLink href={cancelHref} $variant="secondary">
               취소
             </ButtonLink>
-            <Button type="submit">{submitLabel}</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {submitLabel}
+            </Button>
           </Row>
         </Stack>
       </Card>

@@ -1,8 +1,15 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { Session } from "../types";
 
 export const SESSION_KEY = "groupware:session";
+
+/** 로그인 세션. 사용자 정보는 GET /auth/me로 받고, 여기에는 토큰만 둔다. */
+export interface Session {
+  type: "member" | "operator";
+  accessToken: string;
+  /** access token이 만료되면 이 토큰으로 두 토큰을 새로 받는다(1회용). */
+  refreshToken: string;
+}
 
 interface SessionState {
   session: Session | null;
@@ -25,6 +32,9 @@ export const useSessionStore = create<SessionState>()(
     }),
     {
       name: SESSION_KEY,
+      // 목업 시절의 세션({ tenantId, memberId })은 토큰이 없으므로 버린다.
+      version: 1,
+      migrate: () => ({ session: null }),
       storage: createJSONStorage(() => localStorage),
       partialize: ({ session }) => ({ session }),
       skipHydration: true,

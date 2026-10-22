@@ -22,12 +22,14 @@ import {
   Stack,
   Textarea,
 } from "@/components/ui";
-import { createId } from "@/lib/id";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { setServerErrors } from "@/lib/form";
 import { FORM_FIELD_TYPES } from "@/lib/labels";
 import { type ApprovalFormInput, type ApprovalFormValues, approvalFormSchema } from "@/lib/schemas/approval";
-import { getDepartmentName, getMember } from "@/lib/selectors";
-import { useData } from "@/lib/store";
-import type { ApprovalForm } from "@/lib/types";
+import { useCreateApprovalForm, useUpdateApprovalForm } from "@/queries/approval";
+import { useDirectory } from "@/queries/directory";
+import type { ApprovalForm } from "@/types";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
 
 const ItemBox = styled.div`
   display: flex;
@@ -107,11 +109,15 @@ export function FormEditorModal({ open, form, onClose }: FormEditorModalProps) {
 }
 
 function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => void }) {
-  const { data, update } = useData();
+  const { members, getMember, getDepartmentName } = useDirectory();
+  const createForm = useCreateApprovalForm();
+  const updateForm = useUpdateApprovalForm();
+  const saving = createForm.isPending || updateForm.isPending;
   const {
     register,
     control,
     handleSubmit,
+    setError,
     formState: { errors },
   } = useForm<ApprovalFormInput, unknown, ApprovalFormValues>({
     resolver: zodResolver(approvalFormSchema),
@@ -119,7 +125,8 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
       name: form?.name ?? "",
       category: form?.category ?? "",
       description: form?.description ?? "",
-      fields: form?.fields ?? [{ id: createId("fld"), label: "", type: "text", required: true }],
+      // 기존 항목은 id를 그대로 보내 문서 값과의 연결을 유지하고, 새 항목은 id 없이 보내 서버가 만든다.
+      fields: form?.fields ?? [{ label: "", type: "text", required: true }],
       approverIds: form?.approverIds ?? [],
     },
   });
@@ -130,27 +137,29 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
   } = useController({ control, name: "approverIds" });
   const [candidate, setCandidate] = useState("");
 
-  const available = data.members.filter((m) => !approverIds.includes(m.id));
+  const available = members.filter((m) => !approverIds.includes(m.id));
   // 항목 수 오류는 배열 자체에, 항목 이름 오류는 각 항목에 붙는다. 기존처럼 하나만 보여 준다.
   const fieldsError =
     errors.fields?.root?.message ??
     errors.fields?.message ??
-    fields.map((_, index) => errors.fields?.[index]?.label?.message).find(Boolean);
+    fields
+      .map((_, index) => {
+        const item = errors.fields?.[index];
+        return item?.label?.message ?? item?.type?.message ?? item?.placeholder?.message;
+      })
+      .find(Boolean);
 
   const handleSave = handleSubmit((values) => {
-    const saved: ApprovalForm = {
-      id: form?.id ?? createId("form"),
-      ...values,
-      active: form?.active ?? true,
-      updatedAt: new Date().toISOString(),
+    const options = {
+      onSuccess: onClose,
+      onError: (err: unknown) => {
+        // 서버 경로("fields.0.label", "approverIds")가 폼 이름과 같다. 배열 자체 오류만 root로 옮긴다.
+        const applied = setServerErrors(err, setError, (path) => (path === "fields" ? "fields.root" : path));
+        if (!applied) setError("root", { message: getErrorMessage(err) });
+      },
     };
-    update((prev) => ({
-      ...prev,
-      approvalForms: form
-        ? prev.approvalForms.map((f) => (f.id === saved.id ? saved : f))
-        : [...prev.approvalForms, saved],
-    }));
-    onClose();
+    if (form) updateForm.mutate({ id: form.id, body: values }, options);
+    else createForm.mutate(values, options);
   });
 
   return (
@@ -164,11 +173,14 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
           <Button $variant="secondary" onClick={onClose}>
             취소
           </Button>
-          <Button onClick={handleSave}>저장</Button>
+          <Button disabled={saving} onClick={handleSave}>
+            저장
+          </Button>
         </>
       }
     >
       <Stack $gap={24}>
+        {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
         {form && (
           <Notice>
             <Info />
@@ -198,7 +210,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
             )}
           </Field>
           <div data-span="full">
-            <Field label="설명">
+            <Field label="설명" error={errors.description?.message}>
               {(id) => (
                 <Textarea
                   id={id}
@@ -217,7 +229,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
             <Button
               $variant="secondary"
               $size="sm"
-              onClick={() => append({ id: createId("fld"), label: "", type: "text", required: false })}
+              onClick={() => append({ label: "", type: "text", required: false })}
             >
               <Plus />
               항목 추가
@@ -281,7 +293,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
               <option value="">결재자 선택</option>
               {available.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name} {m.position} · {getDepartmentName(data, m.departmentId)}
+                  {m.name} {m.position} · {getDepartmentName(m.departmentId)}
                 </option>
               ))}
             </Select>
@@ -299,15 +311,15 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
           </Row>
           <ol>
             {approverIds.map((approverId, index) => {
-              const member = getMember(data, approverId);
+              const member = getMember(approverId);
               return (
                 <ApproverRow key={approverId}>
                   <span>{index + 1}</span>
                   <Avatar name={member?.name ?? "?"} color={member?.color} size={30} />
                   <div>
-                    <strong>{member?.name ?? "알 수 없음"}</strong>
+                    <strong>{member?.name ?? UNKNOWN_MEMBER_NAME}</strong>
                     <small>
-                      {member ? `${member.position} · ${getDepartmentName(data, member.departmentId)}` : "-"}
+                      {member ? `${member.position} · ${getDepartmentName(member.departmentId)}` : "-"}
                     </small>
                   </div>
                   <IconButton

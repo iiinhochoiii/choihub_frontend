@@ -5,9 +5,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Ban, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { Button, Field, Input, Stack } from "@/components/ui";
+import { setServerErrors } from "@/lib/form";
 import { type InitialPasswordFormValues, initialPasswordSchema } from "@/lib/schemas/account";
-import { useAuth, useCurrentUser, useData } from "@/lib/store";
+import { useAuth, useChangeInitialPassword, useCurrentUser } from "@/queries/auth";
 
 const Screen = styled.div`
   display: flex;
@@ -61,7 +63,6 @@ function useLogoutToLogin() {
 
 /** 운영자가 회사 이용을 정지한 경우 */
 export function SuspendedScreen() {
-  const { data } = useData();
   const logout = useLogoutToLogin();
   return (
     <Screen>
@@ -69,7 +70,7 @@ export function SuspendedScreen() {
         <Ban />
         <h1>이용이 정지된 회사입니다</h1>
         <p>
-          {data.company.name}의 ChoiHub 이용이 정지되었습니다. 자세한 내용은 회사 담당자 또는 ChoiHub 운영팀에 문의하세요.
+          소속 회사의 ChoiHub 이용이 정지되었습니다. 자세한 내용은 회사 담당자 또는 ChoiHub 운영팀에 문의하세요.
         </p>
         <Button $block $variant="secondary" onClick={logout}>
           로그아웃
@@ -81,8 +82,9 @@ export function SuspendedScreen() {
 
 /** 초기 비밀번호로 발급된 계정은 서비스를 쓰기 전에 비밀번호를 바꿔야 한다. */
 export function PasswordChangeScreen() {
-  const { update } = useData();
   const user = useCurrentUser();
+  // 성공하면 mustChangePassword가 풀린 사용자 정보를 다시 받아 셸이 업무 화면을 그린다.
+  const change = useChangeInitialPassword();
   const logout = useLogoutToLogin();
   const {
     register,
@@ -94,18 +96,13 @@ export function PasswordChangeScreen() {
     defaultValues: { password: "", confirm: "" },
   });
 
-  const submit = handleSubmit(({ password }) => {
-    if (password === user.password)
-      return setError("password", { message: "초기 비밀번호와 다른 비밀번호를 입력하세요." });
-    update((prev) => ({
-      ...prev,
-      members: prev.members.map((m) =>
-        m.id === user.id ? { ...m, password, mustChangePassword: false } : m,
-      ),
-    }));
-  });
+  // 초기 비밀번호와 같은지는 서버가 확인한다.
+  const submit = handleSubmit((values) =>
+    change.mutate(values, { onError: (error) => setServerErrors(error, setError) }),
+  );
 
-  const error = errors.password?.message ?? errors.confirm?.message;
+  const serverError = change.error && !Object.keys(errors).length ? getErrorMessage(change.error) : undefined;
+  const error = errors.password?.message ?? errors.confirm?.message ?? serverError;
 
   return (
     <Screen>
@@ -139,7 +136,7 @@ export function PasswordChangeScreen() {
               )}
             </Field>
             {error && <ErrorText role="status">{error}</ErrorText>}
-            <Button type="submit" $block>
+            <Button type="submit" $block disabled={change.isPending}>
               비밀번호 변경하고 시작하기
             </Button>
             <Button $block $variant="ghost" onClick={logout}>

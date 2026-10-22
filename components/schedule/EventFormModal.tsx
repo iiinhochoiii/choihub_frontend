@@ -1,23 +1,22 @@
 "use client";
 
+import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm, useWatch } from "react-hook-form";
-import {
-  Button,
-  CheckboxLabel,
-  Field,
-  FormGrid,
-  Input,
-  Modal,
-  Row,
-  Select,
-  Textarea,
-} from "@/components/ui";
-import { createId } from "@/lib/id";
+import { Button, CheckboxLabel, Field, FormGrid, Input, Modal, Row, Select, Textarea } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { setServerErrors } from "@/lib/form";
 import { EVENT_CATEGORIES } from "@/lib/labels";
 import { type EventFormValues, eventSchema } from "@/lib/schemas/schedule";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { EventCategory } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useCreateEvent } from "@/queries/events";
+import type { EventCategory } from "@/types";
+
+const ErrorText = styled.p`
+  margin-top: 12px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
 
 interface Props {
   defaultDate: string;
@@ -26,12 +25,13 @@ interface Props {
 
 /** 열릴 때마다 새로 마운트되어 defaultDate로 초기화된다. */
 export function EventFormModal({ defaultDate, onClose }: Props) {
-  const { update } = useData();
   const user = useCurrentUser();
+  const createEvent = useCreateEvent();
   const {
     register,
     handleSubmit,
     control,
+    setError,
     formState: { errors },
   } = useForm<EventFormValues>({
     resolver: zodResolver(eventSchema),
@@ -54,26 +54,23 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
   );
   const isCompany = category === "company";
 
-  const submit = handleSubmit((values) => {
-    update((prev) => ({
-      ...prev,
-      events: [
-        ...prev.events,
-        {
-          id: createId("e"),
-          title: values.title,
-          date: values.date,
-          allDay: values.allDay,
-          startTime: values.allDay ? "09:00" : values.startTime,
-          endTime: values.allDay ? "18:00" : values.endTime,
-          category: values.category,
-          ownerId: user.id,
-          description: values.description,
-          shared: values.category === "company" || values.shared,
-        },
-      ],
-    }));
-    onClose();
+  const submit = handleSubmit(async (values) => {
+    try {
+      await createEvent.mutateAsync({
+        title: values.title,
+        date: values.date,
+        allDay: values.allDay,
+        // 종일 일정이면 서버가 09:00~18:00으로 저장한다.
+        startTime: values.allDay ? undefined : values.startTime,
+        endTime: values.allDay ? undefined : values.endTime,
+        category: values.category,
+        description: values.description,
+        shared: values.category === "company" || values.shared,
+      });
+      onClose();
+    } catch (error) {
+      if (!setServerErrors(error, setError)) setError("root", { message: getErrorMessage(error) });
+    }
   });
 
   return (
@@ -86,7 +83,7 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
           <Button $variant="secondary" onClick={onClose}>
             취소
           </Button>
-          <Button type="submit" form="event-form">
+          <Button type="submit" form="event-form" disabled={createEvent.isPending}>
             저장
           </Button>
         </>
@@ -129,12 +126,18 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
           </div>
           {!allDay && (
             <>
-              <Field label="시작 시간" required>
+              <Field label="시작 시간" required error={errors.startTime?.message}>
                 {(id) => <Input id={id} type="time" step={600} {...register("startTime")} />}
               </Field>
               <Field label="종료 시간" required error={errors.endTime?.message}>
                 {(id) => (
-                  <Input id={id} type="time" step={600} aria-invalid={!!errors.endTime} {...register("endTime")} />
+                  <Input
+                    id={id}
+                    type="time"
+                    step={600}
+                    aria-invalid={!!errors.endTime}
+                    {...register("endTime")}
+                  />
                 )}
               </Field>
             </>
@@ -175,6 +178,7 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
             </Row>
           </div>
         </FormGrid>
+        {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
       </form>
     </Modal>
   );

@@ -1,8 +1,11 @@
-import type { ApprovalDocument, ApprovalForm, ApprovalStep } from "./types";
+import type { ApprovalDocument, ApprovalStep } from "@/types";
 
-/** 양식의 결재선으로 결재 단계를 만든다. 기안자 본인은 결재선에서 제외한다. */
-export function buildSteps(form: ApprovalForm, drafterId: string): ApprovalStep[] {
-  return form.approverIds
+/**
+ * 기안 화면의 결재선 미리보기. 실제 결재 단계는 상신 시 서버가 만든다.
+ * (서버와 같이 기안자 본인은 결재선에서 제외해 보여 준다)
+ */
+export function previewSteps(approverIds: string[], drafterId: string): ApprovalStep[] {
+  return approverIds
     .filter((id) => id !== drafterId)
     .map((approverId, index) => ({
       approverId,
@@ -19,45 +22,11 @@ export function isMyTurn(doc: ApprovalDocument, memberId: string): boolean {
   return getCurrentStep(doc)?.approverId === memberId;
 }
 
-/** 아무도 결재하지 않은 진행중 문서만 기안자가 회수할 수 있다. */
+/** 아무도 결재하지 않은 진행중 문서만 기안자가 회수할 수 있다. (버튼 표시용, 최종 판단은 서버) */
 export function canWithdraw(doc: ApprovalDocument, memberId: string): boolean {
   return (
     doc.drafterId === memberId &&
     doc.status === "in_progress" &&
     doc.steps.every((step) => step.status === "pending" || step.status === "waiting")
   );
-}
-
-/** 현재 단계 결재자의 승인/반려를 반영한 새 문서를 반환한다. */
-export function applyDecision(
-  doc: ApprovalDocument,
-  approverId: string,
-  decision: "approved" | "rejected",
-  comment: string,
-): ApprovalDocument {
-  const index = doc.steps.findIndex((step) => step.status === "pending");
-  if (index === -1 || doc.steps[index].approverId !== approverId) return doc;
-
-  const actedAt = new Date().toISOString();
-  const steps = doc.steps.map((step, i): ApprovalStep => {
-    if (i === index) return { ...step, status: decision, comment: comment || undefined, actedAt };
-    if (decision === "approved" && i === index + 1) return { ...step, status: "pending" };
-    return step;
-  });
-
-  let status: ApprovalDocument["status"] = "in_progress";
-  if (decision === "rejected") status = "rejected";
-  else if (index === doc.steps.length - 1) status = "approved";
-
-  return { ...doc, steps, status };
-}
-
-/** 문서번호: 양식카테고리 약어 없이 연도-일련번호 */
-export function nextDocNumber(docs: ApprovalDocument[], date = new Date()): string {
-  const year = date.getFullYear();
-  const prefix = `GW-${year}-`;
-  const max = docs
-    .filter((doc) => doc.docNumber.startsWith(prefix))
-    .reduce((acc, doc) => Math.max(acc, Number(doc.docNumber.slice(prefix.length)) || 0), 0);
-  return `${prefix}${String(max + 1).padStart(4, "0")}`;
 }

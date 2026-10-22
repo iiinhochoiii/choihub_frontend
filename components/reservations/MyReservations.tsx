@@ -1,42 +1,54 @@
 "use client";
 
+import styled from "@emotion/styled";
 import { useState } from "react";
 import {
   Button,
   Card,
   CardHeader,
   CardTitle,
-  ConfirmModal,
   EmptyState,
+  ErrorState,
+  LoadingState,
+  Modal,
   MutedCell,
   Table,
   TableWrap,
   TitleCell,
 } from "@/components/ui";
-import { formatMonthDay, todayKey } from "@/lib/date";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { formatMonthDay } from "@/lib/date";
 import { getRoomName } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
+import { useCancelReservation, useMyReservations } from "@/queries/reservations";
+import type { Room } from "@/types";
 
-export function MyReservations() {
-  const { data, update } = useData();
-  const user = useCurrentUser();
+const ErrorText = styled.p`
+  margin-top: 12px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
+
+export function MyReservations({ rooms }: { rooms: Room[] }) {
+  // 서버가 오늘 이후 내 예약을 날짜·시간순으로 돌려준다.
+  const { data: mine, isPending, error, refetch } = useMyReservations();
+  const cancelReservation = useCancelReservation();
   const [cancelId, setCancelId] = useState<string | null>(null);
-  const today = todayKey();
 
-  const mine = data.reservations
-    .filter((r) => r.memberId === user.id && r.date >= today)
-    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
-
-  const cancel = (id: string) => {
-    update((prev) => ({ ...prev, reservations: prev.reservations.filter((r) => r.id !== id) }));
+  const closeCancel = () => {
+    setCancelId(null);
+    cancelReservation.reset();
   };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>내 예약 ({mine.length})</CardTitle>
+        <CardTitle>내 예약{mine && ` (${mine.length})`}</CardTitle>
       </CardHeader>
-      {mine.length === 0 ? (
+      {isPending ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+      ) : mine.length === 0 ? (
         <EmptyState title="예정된 예약이 없습니다" />
       ) : (
         <TableWrap>
@@ -57,7 +69,7 @@ export function MyReservations() {
                   <td>
                     {r.startTime} ~ {r.endTime}
                   </td>
-                  <MutedCell>{getRoomName(data, r)}</MutedCell>
+                  <MutedCell>{getRoomName(rooms, r)}</MutedCell>
                   <TitleCell $maxWidth={260}>{r.title}</TitleCell>
                   <td style={{ textAlign: "right" }}>
                     <Button $size="sm" $variant="ghost" onClick={() => setCancelId(r.id)}>
@@ -70,15 +82,29 @@ export function MyReservations() {
           </Table>
         </TableWrap>
       )}
-      <ConfirmModal
+      <Modal
         open={cancelId !== null}
         title="예약 취소"
-        message="이 회의실 예약을 취소할까요?"
-        confirmLabel="예약 취소"
-        danger
-        onConfirm={() => cancelId && cancel(cancelId)}
-        onClose={() => setCancelId(null)}
-      />
+        width={400}
+        onClose={closeCancel}
+        footer={
+          <>
+            <Button $variant="secondary" onClick={closeCancel}>
+              취소
+            </Button>
+            <Button
+              $variant="danger"
+              disabled={cancelReservation.isPending}
+              onClick={() => cancelId && cancelReservation.mutate(cancelId, { onSuccess: closeCancel })}
+            >
+              예약 취소
+            </Button>
+          </>
+        }
+      >
+        <p>이 회의실 예약을 취소할까요?</p>
+        {cancelReservation.error && <ErrorText role="alert">{getErrorMessage(cancelReservation.error)}</ErrorText>}
+      </Modal>
     </Card>
   );
 }

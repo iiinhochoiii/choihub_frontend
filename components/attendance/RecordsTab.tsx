@@ -3,11 +3,23 @@
 import styled from "@emotion/styled";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
-import { Badge, IconButton, MutedCell, StatusBadge, Table, TableWrap } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import {
+  Badge,
+  ErrorState,
+  IconButton,
+  LoadingState,
+  MutedCell,
+  StatusBadge,
+  Table,
+  TableWrap,
+} from "@/components/ui";
 import { ATTENDANCE_STATUS, getAttendanceStatus, getWorkedMinutes } from "@/lib/attendance";
 import { addMonths, formatDuration, formatMonthDay, isWeekend, toDateKey, todayKey } from "@/lib/date";
 import { LEAVE_TYPES } from "@/lib/labels";
-import { useCurrentUser, useData } from "@/lib/store";
+import { useMyAttendance, useMyLeaveRequests, useTodayAttendance } from "@/queries/attendance";
+import { useCurrentUser } from "@/queries/auth";
+import { useCompany } from "@/queries/directory";
 import { findLeaveOn } from "./utils";
 
 const MonthNav = styled.div`
@@ -24,26 +36,34 @@ const MonthNav = styled.div`
 `;
 
 export function RecordsTab() {
-  const { data } = useData();
   const user = useCurrentUser();
+  const company = useCompany();
   const [month, setMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
-  const today = todayKey();
+  // 오늘은 서버(회사 시간대) 기준. 받기 전에는 브라우저 날짜로 대신한다.
+  const today = useTodayAttendance().data?.date ?? todayKey();
   const currentMonthKey = today.slice(0, 7);
   const monthKey = toDateKey(month).slice(0, 7);
   const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
 
-  const rows = Array.from({ length: lastDay }, (_, i) => new Date(month.getFullYear(), month.getMonth(), i + 1))
+  const { data: records, isPending, error, refetch } = useMyAttendance(monthKey);
+  const leaveQuery = useMyLeaveRequests();
+  const leaves = leaveQuery.data ?? [];
+
+  const rows = Array.from(
+    { length: lastDay },
+    (_, i) => new Date(month.getFullYear(), month.getMonth(), i + 1),
+  )
     .map((date) => {
       const key = toDateKey(date);
       return {
         key,
         date,
-        record: data.attendance.find((r) => r.memberId === user.id && r.date === key),
-        leave: findLeaveOn(data.leaveRequests, user.id, key),
+        record: records?.find((r) => r.date === key),
+        leave: findLeaveOn(leaves, user.id, key),
       };
     })
     .filter((row) => row.key <= today && (!isWeekend(row.date) || row.record))
@@ -67,46 +87,52 @@ export function RecordsTab() {
         </IconButton>
       </MonthNav>
 
-      <TableWrap>
-        <Table>
-          <thead>
-            <tr>
-              <th>날짜</th>
-              <th>출근</th>
-              <th>퇴근</th>
-              <th>근무시간</th>
-              <th>상태</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
+      {isPending ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+      ) : (
+        <TableWrap>
+          <Table>
+            <thead>
               <tr>
-                <MutedCell colSpan={5} style={{ textAlign: "center", padding: 32 }}>
-                  기록이 없습니다.
-                </MutedCell>
+                <th>날짜</th>
+                <th>출근</th>
+                <th>퇴근</th>
+                <th>근무시간</th>
+                <th>상태</th>
               </tr>
-            )}
-            {rows.map(({ key, record, leave }) => {
-              const minutes = getWorkedMinutes(record);
-              return (
-                <tr key={key}>
-                  <td>{formatMonthDay(key)}</td>
-                  <td>{record?.checkIn ?? "-"}</td>
-                  <td>{record?.checkOut ?? "-"}</td>
-                  <MutedCell>{minutes ? formatDuration(minutes) : "-"}</MutedCell>
-                  <td>
-                    {leave && !record ? (
-                      <Badge $tone="info">{LEAVE_TYPES[leave.type].label}</Badge>
-                    ) : (
-                      <StatusBadge value={ATTENDANCE_STATUS[getAttendanceStatus(record, data.company)]} />
-                    )}
-                  </td>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <MutedCell colSpan={5} style={{ textAlign: "center", padding: 32 }}>
+                    기록이 없습니다.
+                  </MutedCell>
                 </tr>
-              );
-            })}
-          </tbody>
-        </Table>
-      </TableWrap>
+              )}
+              {rows.map(({ key, record, leave }) => {
+                const minutes = getWorkedMinutes(record);
+                return (
+                  <tr key={key}>
+                    <td>{formatMonthDay(key)}</td>
+                    <td>{record?.checkIn ?? "-"}</td>
+                    <td>{record?.checkOut ?? "-"}</td>
+                    <MutedCell>{minutes ? formatDuration(minutes) : "-"}</MutedCell>
+                    <td>
+                      {leave && !record ? (
+                        <Badge $tone="info">{LEAVE_TYPES[leave.type].label}</Badge>
+                      ) : (
+                        <StatusBadge value={ATTENDANCE_STATUS[getAttendanceStatus(record, company)]} />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        </TableWrap>
+      )}
     </div>
   );
 }

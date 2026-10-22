@@ -4,11 +4,13 @@ import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Button, Field, FormGrid, Input, Modal, Select } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { minutesToTime, timeToMinutes, todayKey } from "@/lib/date";
-import { createId } from "@/lib/id";
+import { setServerErrors } from "@/lib/form";
 import { type ReservationFormValues, reservationSchema } from "@/lib/schemas/reservation";
-import { useCurrentUser, useData } from "@/lib/store";
-import { DAY_END, isOverlapping, SLOT_ENDS, SLOT_STARTS } from "./constants";
+import { useCreateReservation } from "@/queries/reservations";
+import type { Room } from "@/types";
+import { DAY_END, SLOT_ENDS, SLOT_STARTS } from "./constants";
 
 const ErrorText = styled.p`
   margin-top: 12px;
@@ -24,14 +26,15 @@ export interface ReservationDraft {
 
 interface Props {
   draft: ReservationDraft;
+  /** 표시 순서대로 정렬된 전체 회의실 */
+  rooms: Room[];
   onClose: () => void;
 }
 
 /** 열릴 때마다 새로 마운트되어 draft 값으로 초기화된다. */
-export function ReservationFormModal({ draft, onClose }: Props) {
-  const { data, update } = useData();
-  const user = useCurrentUser();
-  const activeRooms = data.rooms.filter((room) => room.active);
+export function ReservationFormModal({ draft, rooms, onClose }: Props) {
+  const createReservation = useCreateReservation();
+  const activeRooms = rooms.filter((room) => room.active);
   const {
     register,
     handleSubmit,
@@ -48,21 +51,15 @@ export function ReservationFormModal({ draft, onClose }: Props) {
     },
   });
 
-  const submit = handleSubmit(({ title, ...candidate }) => {
-    if (!activeRooms.some((room) => room.id === candidate.roomId)) {
-      return setError("roomId", {
-        message: "사용 중지된 회의실은 예약할 수 없습니다. 다른 회의실을 선택하세요.",
-      });
-    }
-    if (isOverlapping(data.reservations, candidate)) {
-      return setError("root", { message: "선택한 시간에 이미 예약이 있습니다." });
-    }
-    update((prev) => ({
-      ...prev,
-      reservations: [...prev.reservations, { id: createId("r"), ...candidate, title, memberId: user.id }],
-    }));
-    onClose();
-  });
+  // 겹침·사용 중지·지난 시간은 서버가 최종 확인한다. 필드 오류는 해당 칸에, 그 밖(겹침 등)은 아래에 보여 준다.
+  const submit = handleSubmit((values) =>
+    createReservation.mutate(values, {
+      onSuccess: onClose,
+      onError: (err) => {
+        if (!setServerErrors(err, setError)) setError("root", { message: getErrorMessage(err) });
+      },
+    }),
+  );
 
   return (
     <Modal
@@ -74,7 +71,7 @@ export function ReservationFormModal({ draft, onClose }: Props) {
           <Button $variant="secondary" onClick={onClose}>
             취소
           </Button>
-          <Button type="submit" form="reservation-form">
+          <Button type="submit" form="reservation-form" disabled={createReservation.isPending}>
             예약
           </Button>
         </>

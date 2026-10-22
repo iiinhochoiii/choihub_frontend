@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Building2, CheckCircle2, Info } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, CheckCircle2, Info } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { CredentialCard } from "@/components/common/CredentialCard";
@@ -16,8 +16,9 @@ import {
   Row,
   Stack,
 } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { EMPTY_COMPANY } from "@/lib/company";
-import { createTenant, generatePassword, isBusinessNumberTaken, isEmailTaken } from "@/lib/platform";
+import { setServerErrors } from "@/lib/form";
 import {
   type CompanyCreateFormInput,
   type CompanyCreateFormValues,
@@ -25,7 +26,7 @@ import {
   EMPTY_MANAGER,
   toCompanyFormInput,
 } from "@/lib/schemas/company";
-import { usePlatform } from "@/lib/store";
+import { useCreateTenant } from "@/queries/admin";
 import { CompanyFields } from "./CompanyFields";
 import { ManagerFields } from "./ManagerFields";
 
@@ -38,8 +39,9 @@ interface Issued {
 }
 
 export function CompanyCreate() {
-  const { platform, updatePlatform } = usePlatform();
+  const createTenant = useCreateTenant();
   const [issued, setIssued] = useState<Issued | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -53,24 +55,28 @@ export function CompanyCreate() {
   const scrollToErrors = () => window.scrollTo({ top: 0, behavior: "smooth" });
 
   const submit = handleSubmit(({ company, manager }) => {
-    // 다른 회사·계정과 비교해야 하는 중복 검증
-    const businessNumberTaken = isBusinessNumberTaken(platform, company.businessNumber);
-    const emailTaken = isEmailTaken(platform, manager.email);
-    if (businessNumberTaken) setError("company.businessNumber", { message: "이미 등록된 사업자등록번호입니다." });
-    if (emailTaken) setError("manager.email", { message: "이미 ChoiHub에서 사용 중인 이메일입니다." });
-    if (businessNumberTaken || emailTaken) return scrollToErrors();
-
-    const password = generatePassword();
-    const tenant = createTenant(company, { ...manager, password, mustChangePassword: true });
-    updatePlatform((prev) => ({ ...prev, tenants: [...prev.tenants, tenant] }));
-    setIssued({
-      tenantId: tenant.id,
-      companyName: tenant.data.company.name,
-      email: manager.email,
-      password,
-      loginUrl: `${window.location.origin}/login`,
-    });
-    window.scrollTo({ top: 0 });
+    setSubmitError(null);
+    // 사업자번호·이메일 중복 검사와 초기 비밀번호 생성은 서버가 한다.
+    createTenant.mutate(
+      { company, manager: { ...manager, position: manager.position || undefined } },
+      {
+        onSuccess: ({ tenant, credential }) => {
+          setIssued({
+            tenantId: tenant.id,
+            companyName: tenant.company.name,
+            email: credential.email,
+            password: credential.password,
+            loginUrl: `${window.location.origin}/login`,
+          });
+          window.scrollTo({ top: 0 });
+        },
+        onError: (error) => {
+          // 서버 필드 경로("company.businessNumber", "manager.email")가 폼 필드 이름과 같다.
+          if (!setServerErrors(error, setError)) setSubmitError(getErrorMessage(error));
+          scrollToErrors();
+        },
+      },
+    );
   }, scrollToErrors);
 
   if (issued) {
@@ -113,13 +119,20 @@ export function CompanyCreate() {
               <ArrowLeft />
               취소
             </ButtonLink>
-            <Button type="submit">
+            <Button type="submit" disabled={createTenant.isPending}>
               <Building2 />
               회사 계정 발급
             </Button>
           </>
         }
       />
+
+      {submitError && (
+        <Notice $tone="warning">
+          <AlertCircle />
+          <span>{submitError}</span>
+        </Notice>
+      )}
 
       <Notice>
         <Info />
@@ -143,7 +156,7 @@ export function CompanyCreate() {
           <ManagerFields register={(key) => register(`manager.${key}`)} errors={errors.manager} />
         </Card>
         <Row $justify="flex-end">
-          <Button type="submit" $size="lg">
+          <Button type="submit" $size="lg" disabled={createTenant.isPending}>
             <Building2 />
             회사 계정 발급
           </Button>

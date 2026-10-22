@@ -1,5 +1,4 @@
 import { minutesToTime, timeToMinutes } from "@/lib/date";
-import type { Reservation } from "@/lib/types";
 
 export const DAY_START = 9 * 60;
 export const DAY_END = 19 * 60;
@@ -17,19 +16,4 @@ export const SLOT_ENDS = SLOT_STARTS.map((t) => minutesToTime(timeToMinutes(t) +
 
 export function slotIndex(time: string): number {
   return (timeToMinutes(time) - DAY_START) / SLOT_MINUTES;
-}
-
-export function isOverlapping(
-  reservations: Reservation[],
-  candidate: Pick<Reservation, "roomId" | "date" | "startTime" | "endTime">,
-  ignoreId?: string,
-): boolean {
-  return reservations.some(
-    (r) =>
-      r.id !== ignoreId &&
-      r.roomId === candidate.roomId &&
-      r.date === candidate.date &&
-      r.startTime < candidate.endTime &&
-      r.endTime > candidate.startTime,
-  );
 }

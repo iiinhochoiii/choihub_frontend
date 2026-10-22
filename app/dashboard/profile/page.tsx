@@ -2,8 +2,7 @@
 
 import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { KeyRound, RotateCcw, Save, UserRound } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { KeyRound, Save, UserRound } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import {
@@ -13,7 +12,6 @@ import {
   Card,
   CardHeader,
   CardTitle,
-  ConfirmModal,
   Field,
   FormGrid,
   Input,
@@ -21,7 +19,7 @@ import {
   Select,
   Stack,
 } from "@/components/ui";
-import { getUsedLeaveDays } from "@/lib/attendance";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { formatDate } from "@/lib/date";
 import { MEMBER_STATUS, ROLE_LABELS } from "@/lib/labels";
 import {
@@ -30,9 +28,11 @@ import {
   type ProfileFormValues,
   profileSchema,
 } from "@/lib/schemas/account";
-import { getDepartmentName } from "@/lib/selectors";
-import { useAuth, useCurrentUser, useData } from "@/lib/store";
-import type { MemberStatus } from "@/lib/types";
+import { setServerErrors } from "@/lib/form";
+import { useLeaveBalance } from "@/queries/attendance";
+import { useChangePassword, useCurrentUser } from "@/queries/auth";
+import { useDirectory, useUpdateProfile } from "@/queries/directory";
+import type { MemberStatus } from "@/types";
 import { mq } from "@/styles/theme";
 
 const Layout = styled.div`
@@ -100,65 +100,67 @@ const Feedback = styled.span<{ error?: boolean }>`
 `;
 
 export default function ProfilePage() {
-  const router = useRouter();
-  // RHF의 reset과 구분하기 위해 데이터 초기화는 resetData로 받는다.
-  const { data, update, reset: resetData } = useData();
-  const { logout } = useAuth();
   const user = useCurrentUser();
+  const { getDepartmentName } = useDirectory();
+  // 남은 연차는 서버가 승인된 휴가를 합산해 계산한다.
+  const { data: balance } = useLeaveBalance();
+  const updateProfile = useUpdateProfile();
+  const changePasswordMutation = useChangePassword();
 
   const infoForm = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: { phone: user.phone, extension: user.extension, status: user.status },
   });
   const [infoSaved, setInfoSaved] = useState(false);
+  const [infoServerError, setInfoServerError] = useState<string | null>(null);
 
   const passwordForm = useForm<PasswordChangeFormValues>({
     resolver: zodResolver(passwordChangeSchema),
     defaultValues: { currentPassword: "", nextPassword: "", confirmPassword: "" },
   });
   const [passwordChanged, setPasswordChanged] = useState(false);
-
-  const [resetOpen, setResetOpen] = useState(false);
-
-  const usedLeave = getUsedLeaveDays(data.leaveRequests, user.id);
+  const [passwordServerError, setPasswordServerError] = useState<string | null>(null);
 
   const infoErrors = infoForm.formState.errors;
   const saveInfo = infoForm.handleSubmit(
-    ({ phone, extension, status }) => {
-      update((prev) => ({
-        ...prev,
-        members: prev.members.map((m) => (m.id === user.id ? { ...m, phone, extension, status } : m)),
-      }));
-      setInfoSaved(true);
+    (values) => {
+      setInfoSaved(false);
+      setInfoServerError(null);
+      updateProfile.mutate(values, {
+        onSuccess: () => setInfoSaved(true),
+        onError: (error) => {
+          if (!setServerErrors(error, infoForm.setError)) setInfoServerError(getErrorMessage(error));
+        },
+      });
     },
     () => setInfoSaved(false),
   );
-  const infoError = infoErrors.phone?.message;
+  const infoError =
+    infoErrors.phone?.message ?? infoErrors.extension?.message ?? infoErrors.status?.message ?? infoServerError;
 
   const passwordErrors = passwordForm.formState.errors;
   const changePassword = passwordForm.handleSubmit(
-    ({ currentPassword, nextPassword }) => {
-      // 현재 비밀번호는 사용자 데이터와 비교해야 하므로 제출 시점에 검사한다.
-      if (currentPassword !== user.password) {
-        setPasswordChanged(false);
-        passwordForm.setError("currentPassword", { message: "현재 비밀번호가 올바르지 않습니다." });
-        return;
-      }
-      update((prev) => ({
-        ...prev,
-        members: prev.members.map((m) =>
-          m.id === user.id ? { ...m, password: nextPassword, mustChangePassword: false } : m,
-        ),
-      }));
-      passwordForm.reset();
-      setPasswordChanged(true);
+    (values) => {
+      setPasswordChanged(false);
+      setPasswordServerError(null);
+      // 현재 비밀번호 확인은 서버가 한다.
+      changePasswordMutation.mutate(values, {
+        onSuccess: () => {
+          passwordForm.reset();
+          setPasswordChanged(true);
+        },
+        onError: (error) => {
+          if (!setServerErrors(error, passwordForm.setError)) setPasswordServerError(getErrorMessage(error));
+        },
+      });
     },
     () => setPasswordChanged(false),
   );
   const passwordError =
     passwordErrors.currentPassword?.message ??
     passwordErrors.nextPassword?.message ??
-    passwordErrors.confirmPassword?.message;
+    passwordErrors.confirmPassword?.message ??
+    passwordServerError;
 
   return (
     <>
@@ -169,7 +171,7 @@ export default function ProfilePage() {
           <Avatar name={user.name} color={user.color} size={80} />
           <h2>{user.name}</h2>
           <p>
-            {getDepartmentName(data, user.departmentId)} · {user.position}
+            {getDepartmentName(user.departmentId)} · {user.position}
           </p>
           <Badge $tone={user.isManager ? "primary" : "neutral"}>{ROLE_LABELS[user.role]}</Badge>
           <InfoList>
@@ -179,7 +181,7 @@ export default function ProfilePage() {
             <dd>{formatDate(user.joinedAt)}</dd>
             <dt>연차</dt>
             <dd>
-              {user.annualLeaveTotal - usedLeave}일 남음 / 총 {user.annualLeaveTotal}일
+              {balance ? `${balance.total - balance.used}일 남음 / 총 ${balance.total}일` : "-"}
             </dd>
           </InfoList>
         </ProfileCard>
@@ -223,7 +225,7 @@ export default function ProfilePage() {
             </FormGrid>
             <Actions>
               {infoError ? <Feedback error>{infoError}</Feedback> : infoSaved && <Feedback>저장되었습니다.</Feedback>}
-              <Button onClick={saveInfo}>
+              <Button onClick={saveInfo} disabled={updateProfile.isPending}>
                 <Save />
                 저장
               </Button>
@@ -279,43 +281,13 @@ export default function ProfilePage() {
               ) : (
                 passwordChanged && <Feedback>비밀번호가 변경되었습니다.</Feedback>
               )}
-              <Button onClick={changePassword}>비밀번호 변경</Button>
-            </Actions>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                <RotateCcw />
-                데모 데이터
-              </CardTitle>
-            </CardHeader>
-            <p style={{ fontSize: 13, opacity: 0.75 }}>
-              이 데모는 모든 데이터를 브라우저에 저장합니다. 초기화하면 운영자가 등록한 회사를 포함해 ChoiHub 전체 데이터가
-              처음 상태로 돌아가고 로그아웃됩니다.
-            </p>
-            <Actions>
-              <Button $variant="danger" onClick={() => setResetOpen(true)}>
-                데이터 초기화
+              <Button onClick={changePassword} disabled={changePasswordMutation.isPending}>
+                비밀번호 변경
               </Button>
             </Actions>
           </Card>
         </Stack>
       </Layout>
-
-      <ConfirmModal
-        open={resetOpen}
-        title="데모 데이터 초기화"
-        message={"모든 데이터를 초기 상태로 되돌립니다.\n이 작업은 되돌릴 수 없습니다."}
-        confirmLabel="초기화"
-        danger
-        onClose={() => setResetOpen(false)}
-        onConfirm={() => {
-          resetData();
-          logout();
-          router.replace("/login");
-        }}
-      />
     </>
   );
 }

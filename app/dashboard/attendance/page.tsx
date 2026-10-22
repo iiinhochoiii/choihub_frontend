@@ -7,16 +7,18 @@ import { SummaryCards } from "@/components/attendance/SummaryCards";
 import { TeamTab } from "@/components/attendance/TeamTab";
 import { TodayCard } from "@/components/attendance/TodayCard";
 import { PageHeader, Stack, Tabs, type TabItem } from "@/components/ui";
-import { useCurrentUser, useData } from "@/lib/store";
+import { useCurrentUser } from "@/queries/auth";
+import { useLeaveRequests } from "@/queries/attendance";
 
 type TabValue = "records" | "leave" | "team";
 
 export default function AttendancePage() {
-  const { data } = useData();
   const user = useCurrentUser();
   const [tab, setTab] = useState<TabValue>("records");
 
-  const pendingCount = data.leaveRequests.filter((r) => r.status === "pending").length;
+  // 매니저만: 승인 대기 건수(팀 탭 배지). TeamTab과 같은 쿼리를 공유한다.
+  const { data: pendingRequests } = useLeaveRequests({ status: "pending" }, user.isManager);
+  const pendingCount = pendingRequests?.length ?? 0;
   const tabs: TabItem<TabValue>[] = [
     { value: "records", label: "출퇴근 기록" },
     { value: "leave", label: "휴가 신청 내역" },

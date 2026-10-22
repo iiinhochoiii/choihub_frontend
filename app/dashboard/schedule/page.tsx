@@ -7,11 +7,22 @@ import { DayPanel } from "@/components/schedule/DayPanel";
 import { EventDetailModal } from "@/components/schedule/EventDetailModal";
 import { EventFormModal } from "@/components/schedule/EventFormModal";
 import { MonthCalendar } from "@/components/schedule/MonthCalendar";
-import { Button, Card, CheckboxLabel, Dot, IconButton, PageHeader, Row } from "@/components/ui";
-import { addMonths, parseDateKey, todayKey } from "@/lib/date";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import {
+  Button,
+  Card,
+  CheckboxLabel,
+  Dot,
+  ErrorState,
+  IconButton,
+  LoadingState,
+  PageHeader,
+  Row,
+} from "@/components/ui";
+import { addMonths, getMonthMatrix, parseDateKey, toDateKey, todayKey } from "@/lib/date";
 import { EVENT_CATEGORIES } from "@/lib/labels";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { CalendarEvent, EventCategory } from "@/lib/types";
+import { useEvents } from "@/queries/events";
+import type { CalendarEvent, EventCategory } from "@/types";
 import { mq } from "@/styles/theme";
 
 const Layout = styled.div`
@@ -47,8 +58,6 @@ const sortEvents = (a: CalendarEvent, b: CalendarEvent) =>
   Number(b.allDay) - Number(a.allDay) || a.startTime.localeCompare(b.startTime);
 
 export default function SchedulePage() {
-  const { data } = useData();
-  const user = useCurrentUser();
   const [today] = useState(() => todayKey());
   const [month, setMonth] = useState(() => {
     const d = parseDateKey(today);
@@ -64,16 +73,19 @@ export default function SchedulePage() {
   const [formDate, setFormDate] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
 
-  const visible = data.events
-    .filter((e) => (e.shared || e.ownerId === user.id) && filters[e.category])
-    .sort(sortEvents);
+  // 달력에 보이는 6주(앞뒤 달 포함) 범위만 불러온다. 서버가 내 일정 + 공유 일정만 준다.
+  const matrix = getMonthMatrix(month.getFullYear(), month.getMonth());
+  const range = { from: toDateKey(matrix[0][0]), to: toDateKey(matrix[matrix.length - 1][6]) };
+  const { data: events, isPending, error, refetch } = useEvents(range);
+
+  const visible = (events ?? []).filter((e) => filters[e.category]).sort(sortEvents);
 
   const eventsByDate = new Map<string, CalendarEvent[]>();
   for (const event of visible) {
     eventsByDate.set(event.date, [...(eventsByDate.get(event.date) ?? []), event]);
   }
 
-  const detail = detailId ? data.events.find((e) => e.id === detailId) : undefined;
+  const detail = detailId ? events?.find((e) => e.id === detailId) : undefined;
 
   const select = (key: string) => {
     setSelected(key);
@@ -127,14 +139,20 @@ export default function SchedulePage() {
               ))}
             </Row>
           </CalendarHeader>
-          <MonthCalendar
-            month={month}
-            selected={selected}
-            today={today}
-            eventsByDate={eventsByDate}
-            onSelect={select}
-            onEventClick={setDetailId}
-          />
+          {isPending ? (
+            <LoadingState />
+          ) : error && !events ? (
+            <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+          ) : (
+            <MonthCalendar
+              month={month}
+              selected={selected}
+              today={today}
+              eventsByDate={eventsByDate}
+              onSelect={select}
+              onEventClick={setDetailId}
+            />
+          )}
         </Card>
 
         <DayPanel

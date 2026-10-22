@@ -4,6 +4,7 @@ import styled from "@emotion/styled";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef } from "react";
+import { ApiError } from "@/apis/defaultInstance";
 import { ButtonLink, EmptyState } from "@/components/ui";
 
 export const BackLink = styled(Link)`
@@ -142,6 +143,14 @@ const NavList = styled.ul`
   }
 `;
 
+/** 삭제·좋아요 등 폼이 없는 작업의 서버 오류 */
+export const ActionError = styled.p`
+  margin-top: 12px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+  text-align: right;
+`;
+
 interface AdjacentItem {
   id: string;
   title: string;
@@ -154,10 +163,10 @@ export function AdjacentNav({
   next,
 }: {
   basePath: string;
-  prev?: AdjacentItem;
-  next?: AdjacentItem;
+  prev: AdjacentItem | null;
+  next: AdjacentItem | null;
 }) {
-  const row = (label: string, item?: AdjacentItem) => (
+  const row = (label: string, item: AdjacentItem | null) => (
     <li>
       {item ? (
         <Link href={`${basePath}/${item.id}`}>
@@ -194,6 +203,11 @@ export function NotFoundArticle({ listHref, label }: { listHref: string; label: 
       }
     />
   );
+}
+
+/** 상세 조회가 없는 글로 실패했는지. 삭제됐으면 404, 주소의 id 형식이 틀리면 400(uuid 검증)이 온다. */
+export function isNotFoundError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 400);
 }
 
 /**

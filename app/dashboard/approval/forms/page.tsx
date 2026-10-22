@@ -1,5 +1,6 @@
 "use client";
 
+import styled from "@emotion/styled";
 import { ArrowLeft, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { FormEditorModal } from "@/components/approval/FormEditorModal";
@@ -9,44 +10,70 @@ import {
   Button,
   ButtonLink,
   CheckboxLabel,
-  ConfirmModal,
   EmptyState,
+  ErrorState,
   IconButton,
+  LoadingState,
   Modal,
   MutedCell,
   PageHeader,
   Row,
+  Stack,
   Table,
   TableWrap,
   TitleCell,
 } from "@/components/ui";
+import { ApiError, getErrorMessage } from "@/apis/defaultInstance";
 import { formatDate } from "@/lib/date";
-import { getMemberName } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { ApprovalForm } from "@/lib/types";
+import { useApprovalForms, useDeleteApprovalForm, useSetApprovalFormActive } from "@/queries/approval";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import type { ApprovalForm } from "@/types";
+
+const ErrorText = styled.p`
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
 
 export default function ApprovalFormsPage() {
-  const { data, update } = useData();
   const user = useCurrentUser();
+  if (!user.isManager) return <AccessDenied />;
+  return <FormsManager />;
+}
+
+function FormsManager() {
+  const { getMemberName } = useDirectory();
+  // 매니저는 중지된 양식까지 전체를 받는다.
+  const { data: forms, isPending, error, refetch } = useApprovalForms();
+  const setActiveMutation = useSetApprovalFormActive();
+  const deleteMutation = useDeleteApprovalForm();
   const [editor, setEditor] = useState<{ open: boolean; form: ApprovalForm | null }>({
     open: false,
     form: null,
   });
   const [deleting, setDeleting] = useState<ApprovalForm | null>(null);
-  const [inUse, setInUse] = useState<ApprovalForm | null>(null);
+  /** 기안된 문서가 있어 삭제가 막힌 양식과 서버 안내 문구 */
+  const [inUse, setInUse] = useState<{ form: ApprovalForm; message: string } | null>(null);
 
-  if (!user.isManager) return <AccessDenied />;
+  const setActive = (id: string, active: boolean, onSuccess?: () => void) =>
+    setActiveMutation.mutate({ id, active }, { onSuccess, onError: (err) => window.alert(getErrorMessage(err)) });
 
-  const setActive = (id: string, active: boolean) =>
-    update((prev) => ({
-      ...prev,
-      approvalForms: prev.approvalForms.map((f) => (f.id === id ? { ...f, active } : f)),
-    }));
-
-  const requestDelete = (form: ApprovalForm) => {
-    if (data.approvalDocs.some((d) => d.formId === form.id)) setInUse(form);
-    else setDeleting(form);
+  const closeDelete = () => {
+    setDeleting(null);
+    deleteMutation.reset();
   };
+
+  const confirmDelete = (form: ApprovalForm) =>
+    deleteMutation.mutate(form.id, {
+      onSuccess: closeDelete,
+      onError: (err) => {
+        // 기안된 문서가 있으면 서버가 409로 막는다. 사용 중지를 안내하는 창으로 바꿔 보여 준다.
+        if (err instanceof ApiError && err.status === 409) {
+          closeDelete();
+          setInUse({ form, message: err.message });
+        }
+      },
+    });
 
   return (
     <>
@@ -67,7 +94,11 @@ export default function ApprovalFormsPage() {
       />
 
       <TableWrap>
-        {data.approvalForms.length === 0 ? (
+        {isPending ? (
+          <LoadingState />
+        ) : error ? (
+          <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+        ) : forms.length === 0 ? (
           <EmptyState title="등록된 양식이 없습니다." />
         ) : (
           <Table>
@@ -83,7 +114,7 @@ export default function ApprovalFormsPage() {
               </tr>
             </thead>
             <tbody>
-              {data.approvalForms.map((form) => (
+              {forms.map((form) => (
                 <tr key={form.id}>
                   <TitleCell $maxWidth={240}>{form.name}</TitleCell>
                   <td>
@@ -93,7 +124,7 @@ export default function ApprovalFormsPage() {
                   <td>
                     {form.approverIds.length === 0
                       ? "-"
-                      : form.approverIds.map((id) => getMemberName(data, id)).join(" → ")}
+                      : form.approverIds.map((id) => getMemberName(id)).join(" → ")}
                   </td>
                   <MutedCell>{formatDate(form.updatedAt)}</MutedCell>
                   <td>
@@ -101,6 +132,7 @@ export default function ApprovalFormsPage() {
                       <input
                         type="checkbox"
                         checked={form.active}
+                        disabled={setActiveMutation.isPending}
                         onChange={(e) => setActive(form.id, e.target.checked)}
                       />
                       {form.active ? "사용" : "중지"}
@@ -111,7 +143,7 @@ export default function ApprovalFormsPage() {
                       <IconButton aria-label="수정" onClick={() => setEditor({ open: true, form })}>
                         <Pencil />
                       </IconButton>
-                      <IconButton aria-label="삭제" onClick={() => requestDelete(form)}>
+                      <IconButton aria-label="삭제" onClick={() => setDeleting(form)}>
                         <Trash2 />
                       </IconButton>
                     </Row>
@@ -129,20 +161,31 @@ export default function ApprovalFormsPage() {
         onClose={() => setEditor({ open: false, form: null })}
       />
 
-      <ConfirmModal
+      <Modal
         open={!!deleting}
         title="양식 삭제"
-        message={`'${deleting?.name}' 양식을 삭제합니다. 되돌릴 수 없습니다.`}
-        confirmLabel="삭제"
-        danger
-        onClose={() => setDeleting(null)}
-        onConfirm={() =>
-          update((prev) => ({
-            ...prev,
-            approvalForms: prev.approvalForms.filter((f) => f.id !== deleting?.id),
-          }))
+        width={400}
+        onClose={closeDelete}
+        footer={
+          <>
+            <Button $variant="secondary" onClick={closeDelete}>
+              취소
+            </Button>
+            <Button
+              $variant="danger"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleting && confirmDelete(deleting)}
+            >
+              삭제
+            </Button>
+          </>
         }
-      />
+      >
+        <Stack $gap={12}>
+          <p>&apos;{deleting?.name}&apos; 양식을 삭제합니다. 되돌릴 수 없습니다.</p>
+          {deleteMutation.error && <ErrorText role="alert">{getErrorMessage(deleteMutation.error)}</ErrorText>}
+        </Stack>
+      </Modal>
 
       <Modal
         open={!!inUse}
@@ -154,12 +197,10 @@ export default function ApprovalFormsPage() {
             <Button $variant="secondary" onClick={() => setInUse(null)}>
               닫기
             </Button>
-            {inUse?.active && (
+            {inUse?.form.active && (
               <Button
-                onClick={() => {
-                  setActive(inUse.id, false);
-                  setInUse(null);
-                }}
+                disabled={setActiveMutation.isPending}
+                onClick={() => setActive(inUse.form.id, false, () => setInUse(null))}
               >
                 사용 중지
               </Button>
@@ -167,11 +208,7 @@ export default function ApprovalFormsPage() {
           </>
         }
       >
-        <p>
-          &apos;{inUse?.name}&apos; 양식으로 기안된 문서가 있어 삭제할 수 없습니다.
-          <br />
-          대신 사용을 중지하면 새 문서 작성 목록에서 숨겨집니다.
-        </p>
+        <p>{inUse?.message}</p>
       </Modal>
     </>
   );

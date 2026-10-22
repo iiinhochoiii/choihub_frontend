@@ -5,9 +5,8 @@ import { Plus } from "lucide-react";
 import { Badge, Button, Card, CardHeader, CardTitle, EmptyState, transientOptions } from "@/components/ui";
 import { formatMonthDay } from "@/lib/date";
 import { EVENT_CATEGORIES } from "@/lib/labels";
-import { getMemberName } from "@/lib/selectors";
-import { useData } from "@/lib/store";
-import type { CalendarEvent } from "@/lib/types";
+import { useDirectory } from "@/queries/directory";
+import type { CalendarEvent } from "@/types";
 
 const List = styled.ul`
   display: flex;
@@ -52,7 +51,7 @@ interface Props {
 }
 
 export function DayPanel({ date, events, onAdd, onEventClick }: Props) {
-  const { data } = useData();
+  const { getMemberName } = useDirectory();
 
   return (
     <Card>
@@ -75,7 +74,7 @@ export function DayPanel({ date, events, onAdd, onEventClick }: Props) {
                   <strong>{event.title}</strong>
                   <small>
                     {event.allDay ? "종일" : `${event.startTime} ~ ${event.endTime}`}
-                    <span>· {getMemberName(data, event.ownerId)}</span>
+                    <span>· {getMemberName(event.ownerId)}</span>
                     <Badge $tone={event.shared ? "primary" : "neutral"}>
                       {event.shared ? category.label : "비공개"}
                     </Badge>

@@ -2,53 +2,71 @@
 
 import styled from "@emotion/styled";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { isOverdue, TaskBoard } from "@/components/tasks/TaskBoard";
 import { TaskFormModal } from "@/components/tasks/TaskFormModal";
-import { Button, ChipGroup, Muted, PageHeader, Row, Select, Toolbar } from "@/components/ui";
+import {
+  Button,
+  ChipGroup,
+  ErrorState,
+  LoadingState,
+  Muted,
+  PageHeader,
+  Row,
+  Select,
+  Toolbar,
+} from "@/components/ui";
 import { TASK_PRIORITY } from "@/lib/labels";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { Task, TaskPriority, TaskStatus } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import { useTasks, useUpdateTask } from "@/queries/tasks";
+import type { Task, TaskListParams, TaskPriority, TaskStatus } from "@/types";
 
 const FilterSelect = styled(Select)`
   width: auto;
   min-width: 130px;
 `;
 
+const ErrorText = styled.p`
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
+
 type Scope = "mine" | "all";
 type ModalState = { taskId: string | null } | null;
 
 export default function TasksPage() {
-  const { data, update } = useData();
   const user = useCurrentUser();
+  const { members } = useDirectory();
   const [scope, setScope] = useState<Scope>("mine");
   const [assigneeId, setAssigneeId] = useState("all");
   const [priority, setPriority] = useState<TaskPriority | "all">("all");
   const [modal, setModal] = useState<ModalState>(null);
 
-  const canEdit = (task: Task) =>
-    user.isManager || task.createdBy === user.id || task.assigneeId === user.id;
+  const canEdit = (task: Task) => user.isManager || task.createdBy === user.id || task.assigneeId === user.id;
 
-  const tasks = useMemo(
-    () =>
-      data.tasks
-        .filter((t) => (scope === "mine" ? t.assigneeId === user.id : assigneeId === "all" || t.assigneeId === assigneeId))
-        .filter((t) => priority === "all" || t.priority === priority),
-    [data.tasks, scope, assigneeId, priority, user.id],
-  );
+  // 담당자·우선순위 필터는 서버에서 한다. mine은 내가 담당자인 업무
+  const params: TaskListParams = {
+    scope,
+    ...(scope === "all" && assigneeId !== "all" && { assigneeId }),
+    ...(priority !== "all" && { priority }),
+  };
+  const { data, isPending, error, refetch } = useTasks(params);
+  // 상태 이동은 낙관적으로 바로 반영하고, 실패하면 되돌린 뒤 오류를 보여 준다.
+  const updateTask = useUpdateTask();
+  const tasks = data ?? [];
 
   const overdueCount = tasks.filter(isOverdue).length;
 
   const handleMove = (taskId: string, status: TaskStatus) => {
-    const task = data.tasks.find((t) => t.id === taskId);
+    const task = tasks.find((t) => t.id === taskId);
     if (!task || task.status === status || !canEdit(task)) return;
-    update((prev) => ({
-      ...prev,
-      tasks: prev.tasks.map((t) => (t.id === taskId ? { ...t, status } : t)),
-    }));
+    updateTask.mutate({ id: taskId, body: { status } });
   };
 
-  const editingTask = modal?.taskId ? (data.tasks.find((t) => t.id === modal.taskId) ?? null) : null;
+  const editingTask = modal?.taskId ? (tasks.find((t) => t.id === modal.taskId) ?? null) : null;
 
   return (
     <>
@@ -74,9 +92,13 @@ export default function TasksPage() {
             onChange={setScope}
           />
           {scope === "all" && (
-            <FilterSelect value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} aria-label="담당자">
+            <FilterSelect
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              aria-label="담당자"
+            >
               <option value="all">전체 담당자</option>
-              {data.members.map((m) => (
+              {members.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
                 </option>
@@ -101,13 +123,23 @@ export default function TasksPage() {
         </Muted>
       </Toolbar>
 
-      <TaskBoard
-        data={data}
-        tasks={tasks}
-        canEdit={canEdit}
-        onOpen={(task) => setModal({ taskId: task.id })}
-        onMove={handleMove}
-      />
+      {updateTask.error && <ErrorText role="alert">{getErrorMessage(updateTask.error)}</ErrorText>}
+
+      {isPending ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+      ) : (
+        <TaskBoard
+          tasks={tasks}
+          canEdit={canEdit}
+          onOpen={(task) => {
+            updateTask.reset();
+            setModal({ taskId: task.id });
+          }}
+          onMove={handleMove}
+        />
+      )}
 
       {modal && (
         <TaskFormModal

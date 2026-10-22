@@ -3,7 +3,7 @@
 import type { UseFormRegisterReturn } from "react-hook-form";
 import { Input, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/date";
-import type { FormField } from "@/lib/types";
+import type { FormField } from "@/types";
 
 /** 양식 필드 타입에 맞는 입력 컨트롤. register() 결과를 그대로 넘겨 받는다. */
 export function FieldControl({

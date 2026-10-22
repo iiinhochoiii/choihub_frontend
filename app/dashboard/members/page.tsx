@@ -19,9 +19,9 @@ import {
   SearchInput,
   Toolbar,
 } from "@/components/ui";
-import { getDepartmentName, getDepartmentTreeIds } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { Member } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import type { Member } from "@/types";
 import { mq } from "@/styles/theme";
 
 const Layout = styled.div`
@@ -69,7 +69,7 @@ type Modal =
   | null;
 
 export default function MembersPage() {
-  const { data } = useData();
+  const { members: allMembers, getDepartmentName, getDepartmentTreeIds, getMember } = useDirectory();
   const user = useCurrentUser();
   const [selected, setSelected] = useState("all");
   const [query, setQuery] = useState("");
@@ -77,9 +77,9 @@ export default function MembersPage() {
   const [modal, setModal] = useState<Modal>(null);
 
   const members = useMemo(() => {
-    const deptIds = selected === "all" ? null : new Set(getDepartmentTreeIds(data, selected));
+    const deptIds = selected === "all" ? null : new Set(getDepartmentTreeIds(selected));
     const q = query.trim().toLowerCase();
-    return data.members
+    return allMembers
       .filter((m) => !deptIds || deptIds.has(m.departmentId))
       .filter(
         (m) =>
@@ -87,9 +87,9 @@ export default function MembersPage() {
           [m.name, m.email, m.phone, m.position, m.extension].some((v) => v.toLowerCase().includes(q)),
       )
       .sort((a, b) => a.departmentId.localeCompare(b.departmentId) || a.name.localeCompare(b.name, "ko"));
-  }, [data, selected, query]);
+  }, [allMembers, getDepartmentTreeIds, selected, query]);
 
-  const findMember = (id: string | null) => (id ? (data.members.find((m) => m.id === id) ?? null) : null);
+  const findMember = (id: string | null) => (id ? (getMember(id) ?? null) : null);
 
   return (
     <>
@@ -114,7 +114,7 @@ export default function MembersPage() {
 
       <Layout>
         <TreeCard $padding={12}>
-          <OrgTree data={data} selected={selected} onSelect={setSelected} />
+          <OrgTree selected={selected} onSelect={setSelected} />
         </TreeCard>
 
         <div>
@@ -130,7 +130,7 @@ export default function MembersPage() {
             </SearchBox>
             <Row $gap={12}>
               <Muted>
-                {selected === "all" ? "전체" : getDepartmentName(data, selected)} · {members.length}명
+                {selected === "all" ? "전체" : getDepartmentName(selected)} · {members.length}명
               </Muted>
               <ViewToggle role="group" aria-label="보기 방식">
                 <IconButton $size={30} aria-label="카드 보기" aria-pressed={view === "card"} onClick={() => setView("card")}>
@@ -149,7 +149,6 @@ export default function MembersPage() {
             </Card>
           ) : (
             <MemberList
-              data={data}
               members={members}
               view={view}
               onSelect={(m: Member) => setModal({ type: "detail", memberId: m.id })}
@@ -160,9 +159,9 @@ export default function MembersPage() {
 
       {modal?.type === "detail" && (
         <MemberDetailModal
-          data={data}
           member={findMember(modal.memberId)}
           canEdit={user.isManager}
+          canDelete={user.isManager && modal.memberId !== user.id}
           onEdit={(m) => setModal({ type: "form", memberId: m.id })}
           onClose={() => setModal(null)}
         />

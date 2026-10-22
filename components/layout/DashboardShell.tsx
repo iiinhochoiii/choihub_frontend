@@ -3,8 +3,11 @@
 import styled from "@emotion/styled";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useDirectoryStatus } from "@/queries/directory";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { PasswordChangeScreen, SuspendedScreen } from "@/components/auth/AccountGate";
-import { useAuth } from "@/lib/store";
+import { ErrorState } from "@/components/ui";
+import { useAuth } from "@/queries/auth";
 import { mq } from "@/styles/theme";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
@@ -58,16 +61,25 @@ export const ShellLoading = styled.div`
 /** 로그인 가드 + 사이드바/상단바 레이아웃 */
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { ready, user, tenant } = useAuth();
+  const { ready, error, retry, user, tenant } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  // 정지된 회사나 비밀번호 변경 전 계정은 업무 API를 쓸 수 없으므로 그때는 불러오지 않는다.
+  const usable = !!user && tenant?.status === "active" && !user.mustChangePassword;
+  const directory = useDirectoryStatus(usable);
 
   useEffect(() => {
-    if (ready && !user) router.replace("/login");
-  }, [ready, user, router]);
+    if (ready && !error && !user) router.replace("/login");
+  }, [ready, error, user, router]);
 
+  if (ready && error) {
+    return <ErrorState message={getErrorMessage(error)} onRetry={retry} />;
+  }
   if (!ready || !user || !tenant) return <ShellLoading aria-label="불러오는 중" />;
   if (tenant.status === "suspended") return <SuspendedScreen />;
   if (user.mustChangePassword) return <PasswordChangeScreen />;
+  if (directory.error) return <ErrorState message={getErrorMessage(directory.error)} onRetry={directory.refetch} />;
+  // 구성원·부서·회사정보를 먼저 불러와 하위 화면이 바로 쓸 수 있게 한다(apis/queries/directory).
+  if (!directory.ready) return <ShellLoading aria-label="불러오는 중" />;
 
   return (
     <>

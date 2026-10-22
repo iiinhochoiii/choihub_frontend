@@ -11,7 +11,7 @@ import type {
   Role,
   TaskPriority,
   TaskStatus,
-} from "./types";
+} from "@/types";
 
 /** Badge 컴포넌트의 tone 값 */
 export type Tone = "neutral" | "primary" | "success" | "warning" | "danger" | "info";

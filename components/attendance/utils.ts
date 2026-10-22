@@ -1,5 +1,5 @@
 import { formatDate } from "@/lib/date";
-import type { LeaveRequest } from "@/lib/types";
+import type { LeaveRequest } from "@/types";
 
 /** 해당 날짜를 포함하는 승인된 휴가 */
 export function findLeaveOn(
