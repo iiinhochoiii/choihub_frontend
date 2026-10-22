@@ -1,46 +1,36 @@
 "use client";
 
+import type { UseFormRegisterReturn } from "react-hook-form";
 import { Input, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/date";
 import type { FormField } from "@/lib/types";
 
-/** 양식 필드 타입에 맞는 입력 컨트롤 */
+/** 양식 필드 타입에 맞는 입력 컨트롤. register() 결과를 그대로 넘겨 받는다. */
 export function FieldControl({
   id,
   field,
-  value,
   invalid,
-  onChange,
-}: {
+  ...registered
+}: UseFormRegisterReturn & {
   id: string;
   field: FormField;
-  value: string;
   invalid?: boolean;
-  onChange: (value: string) => void;
 }) {
   const common = {
     id,
-    value,
     placeholder: field.placeholder,
     "aria-invalid": invalid || undefined,
+    ...registered,
   };
   switch (field.type) {
     case "textarea":
-      return <Textarea {...common} onChange={(e) => onChange(e.target.value)} />;
+      return <Textarea {...common} />;
     case "number":
-      return (
-        <Input
-          {...common}
-          type="number"
-          inputMode="numeric"
-          min={0}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      );
+      return <Input {...common} type="number" inputMode="numeric" min={0} />;
     case "date":
-      return <Input {...common} type="date" onChange={(e) => onChange(e.target.value)} />;
+      return <Input {...common} type="date" />;
     default:
-      return <Input {...common} type="text" onChange={(e) => onChange(e.target.value)} />;
+      return <Input {...common} type="text" />;
   }
 }
 

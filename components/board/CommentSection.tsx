@@ -1,16 +1,16 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { MessageCircle, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { Avatar, Button, Card, IconButton, Textarea } from "@/components/ui";
 import { formatRelative } from "@/lib/date";
 import { createId } from "@/lib/id";
+import { COMMENT_MAX, type CommentFormValues, commentSchema } from "@/lib/schemas/comment";
 import { getMember } from "@/lib/selectors";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { Post } from "@/lib/types";
-
-const COMMENT_MAX = 500;
 
 const Title = styled.h2`
   display: flex;
@@ -106,7 +106,11 @@ const Composer = styled.form`
 export function CommentSection({ post }: { post: Post }) {
   const { data, update } = useData();
   const user = useCurrentUser();
-  const [content, setContent] = useState("");
+  const { register, control, handleSubmit, reset } = useForm<CommentFormValues>({
+    resolver: zodResolver(commentSchema),
+    defaultValues: { content: "" },
+  });
+  const content = useWatch({ control, name: "content" });
 
   const updateComments = (fn: (comments: Post["comments"]) => Post["comments"]) =>
     update((prev) => ({
@@ -114,16 +118,13 @@ export function CommentSection({ post }: { post: Post }) {
       posts: prev.posts.map((p) => (p.id === post.id ? { ...p, comments: fn(p.comments) } : p)),
     }));
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const text = content.trim();
-    if (!text) return;
+  const submit = handleSubmit(({ content: text }) => {
     updateComments((comments) => [
       ...comments,
       { id: createId("c"), authorId: user.id, content: text, createdAt: new Date().toISOString() },
     ]);
-    setContent("");
-  };
+    reset();
+  });
 
   return (
     <Card $padding={24} style={{ marginTop: 16 }}>
@@ -164,13 +165,12 @@ export function CommentSection({ post }: { post: Post }) {
         </List>
       )}
 
-      <Composer onSubmit={handleSubmit}>
+      <Composer onSubmit={submit}>
         <Textarea
           aria-label="댓글 입력"
           placeholder="댓글을 입력하세요"
           maxLength={COMMENT_MAX}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
+          {...register("content")}
         />
         <div>
           <span>

@@ -1,7 +1,9 @@
 "use client";
 
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, Building2, CheckCircle2, Info } from "lucide-react";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import { CredentialCard } from "@/components/common/CredentialCard";
 import {
   Button,
@@ -14,18 +16,18 @@ import {
   Row,
   Stack,
 } from "@/components/ui";
+import { EMPTY_COMPANY } from "@/lib/company";
+import { createTenant, generatePassword, isBusinessNumberTaken, isEmailTaken } from "@/lib/platform";
 import {
-  type CompanyErrors,
-  type CompanyForm,
-  EMPTY_COMPANY,
-  fromCompanyForm,
-  toCompanyForm,
-  validateCompany,
-} from "@/lib/company";
-import { createTenant, generatePassword, isBusinessNumberTaken } from "@/lib/platform";
+  type CompanyCreateFormInput,
+  type CompanyCreateFormValues,
+  companyCreateSchema,
+  EMPTY_MANAGER,
+  toCompanyFormInput,
+} from "@/lib/schemas/company";
 import { usePlatform } from "@/lib/store";
 import { CompanyFields } from "./CompanyFields";
-import { EMPTY_MANAGER, type ManagerErrors, ManagerFields, type ManagerForm, validateManager } from "./ManagerFields";
+import { ManagerFields } from "./ManagerFields";
 
 interface Issued {
   tenantId: string;
@@ -37,38 +39,39 @@ interface Issued {
 
 export function CompanyCreate() {
   const { platform, updatePlatform } = usePlatform();
-  const [company, setCompany] = useState<CompanyForm>(() => toCompanyForm(EMPTY_COMPANY));
-  const [companyErrors, setCompanyErrors] = useState<CompanyErrors>({});
-  const [manager, setManager] = useState<ManagerForm>(EMPTY_MANAGER);
-  const [managerErrors, setManagerErrors] = useState<ManagerErrors>({});
   const [issued, setIssued] = useState<Issued | null>(null);
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors },
+  } = useForm<CompanyCreateFormInput, unknown, CompanyCreateFormValues>({
+    resolver: zodResolver(companyCreateSchema),
+    defaultValues: { company: toCompanyFormInput(EMPTY_COMPANY), manager: EMPTY_MANAGER },
+  });
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const nextCompanyErrors = validateCompany(company);
-    if (!nextCompanyErrors.businessNumber && isBusinessNumberTaken(platform, company.businessNumber)) {
-      nextCompanyErrors.businessNumber = "이미 등록된 사업자등록번호입니다.";
-    }
-    const nextManagerErrors = validateManager(manager, platform);
-    setCompanyErrors(nextCompanyErrors);
-    setManagerErrors(nextManagerErrors);
-    if (Object.keys(nextCompanyErrors).length > 0 || Object.keys(nextManagerErrors).length > 0) {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
+  const scrollToErrors = () => window.scrollTo({ top: 0, behavior: "smooth" });
+
+  const submit = handleSubmit(({ company, manager }) => {
+    // 다른 회사·계정과 비교해야 하는 중복 검증
+    const businessNumberTaken = isBusinessNumberTaken(platform, company.businessNumber);
+    const emailTaken = isEmailTaken(platform, manager.email);
+    if (businessNumberTaken) setError("company.businessNumber", { message: "이미 등록된 사업자등록번호입니다." });
+    if (emailTaken) setError("manager.email", { message: "이미 ChoiHub에서 사용 중인 이메일입니다." });
+    if (businessNumberTaken || emailTaken) return scrollToErrors();
 
     const password = generatePassword();
-    const tenant = createTenant(fromCompanyForm(company), { ...manager, password, mustChangePassword: true });
+    const tenant = createTenant(company, { ...manager, password, mustChangePassword: true });
     updatePlatform((prev) => ({ ...prev, tenants: [...prev.tenants, tenant] }));
     setIssued({
       tenantId: tenant.id,
       companyName: tenant.data.company.name,
-      email: manager.email.trim(),
+      email: manager.email,
       password,
       loginUrl: `${window.location.origin}/login`,
     });
     window.scrollTo({ top: 0 });
-  };
+  }, scrollToErrors);
 
   if (issued) {
     return (
@@ -128,20 +131,16 @@ export function CompanyCreate() {
 
       <Stack $gap={16}>
         <CompanyFields
-          form={company}
-          errors={companyErrors}
+          company={EMPTY_COMPANY}
           editing
-          onChange={(key, value) => setCompany((prev) => ({ ...prev, [key]: value }))}
+          register={(key) => register(`company.${key}`)}
+          errors={errors.company}
         />
         <Card>
           <CardHeader>
             <CardTitle>매니저 계정</CardTitle>
           </CardHeader>
-          <ManagerFields
-            form={manager}
-            errors={managerErrors}
-            onChange={(key, value) => setManager((prev) => ({ ...prev, [key]: value }))}
-          />
+          <ManagerFields register={(key) => register(`manager.${key}`)} errors={errors.manager} />
         </Card>
         <Row $justify="flex-end">
           <Button type="submit" $size="lg">

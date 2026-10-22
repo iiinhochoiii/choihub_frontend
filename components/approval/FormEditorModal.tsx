@@ -1,8 +1,10 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowDown, ArrowUp, Info, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { useController, useFieldArray, useForm } from "react-hook-form";
 import {
   Avatar,
   Button,
@@ -22,9 +24,10 @@ import {
 } from "@/components/ui";
 import { createId } from "@/lib/id";
 import { FORM_FIELD_TYPES } from "@/lib/labels";
+import { type ApprovalFormInput, type ApprovalFormValues, approvalFormSchema } from "@/lib/schemas/approval";
 import { getDepartmentName, getMember } from "@/lib/selectors";
 import { useData } from "@/lib/store";
-import type { ApprovalForm, FormField, FormFieldType } from "@/lib/types";
+import type { ApprovalForm } from "@/lib/types";
 
 const ItemBox = styled.div`
   display: flex;
@@ -91,14 +94,6 @@ function move<T>(list: T[], index: number, delta: number): T[] {
   return next;
 }
 
-interface Draft {
-  name: string;
-  category: string;
-  description: string;
-  fields: FormField[];
-  approverIds: string[];
-}
-
 interface FormEditorModalProps {
   open: boolean;
   form: ApprovalForm | null;
@@ -113,43 +108,39 @@ export function FormEditorModal({ open, form, onClose }: FormEditorModalProps) {
 
 function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => void }) {
   const { data, update } = useData();
-  const [draft, setDraft] = useState<Draft>(() => ({
-    name: form?.name ?? "",
-    category: form?.category ?? "",
-    description: form?.description ?? "",
-    fields: form?.fields ?? [{ id: createId("fld"), label: "", type: "text", required: true }],
-    approverIds: form?.approverIds ?? [],
-  }));
+  const {
+    register,
+    control,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<ApprovalFormInput, unknown, ApprovalFormValues>({
+    resolver: zodResolver(approvalFormSchema),
+    defaultValues: {
+      name: form?.name ?? "",
+      category: form?.category ?? "",
+      description: form?.description ?? "",
+      fields: form?.fields ?? [{ id: createId("fld"), label: "", type: "text", required: true }],
+      approverIds: form?.approverIds ?? [],
+    },
+  });
+  const { fields, append, remove, swap } = useFieldArray({ control, name: "fields" });
+  const {
+    field: { value: approverIds, onChange: setApproverIds },
+    fieldState: { error: approversError },
+  } = useController({ control, name: "approverIds" });
   const [candidate, setCandidate] = useState("");
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const patch = (next: Partial<Draft>) => setDraft((prev) => ({ ...prev, ...next }));
-  const patchField = (id: string, next: Partial<FormField>) =>
-    patch({ fields: draft.fields.map((f) => (f.id === id ? { ...f, ...next } : f)) });
+  const available = data.members.filter((m) => !approverIds.includes(m.id));
+  // 항목 수 오류는 배열 자체에, 항목 이름 오류는 각 항목에 붙는다. 기존처럼 하나만 보여 준다.
+  const fieldsError =
+    errors.fields?.root?.message ??
+    errors.fields?.message ??
+    fields.map((_, index) => errors.fields?.[index]?.label?.message).find(Boolean);
 
-  const available = data.members.filter((m) => !draft.approverIds.includes(m.id));
-
-  const handleSave = () => {
-    const next: Record<string, string> = {};
-    if (!draft.name.trim()) next.name = "양식 이름을 입력하세요.";
-    if (!draft.category.trim()) next.category = "카테고리를 입력하세요.";
-    if (draft.fields.length === 0) next.fields = "입력 항목을 1개 이상 추가하세요.";
-    else if (draft.fields.some((f) => !f.label.trim())) next.fields = "모든 입력 항목의 이름을 입력하세요.";
-    if (draft.approverIds.length === 0) next.approvers = "결재자를 1명 이상 지정하세요.";
-    setErrors(next);
-    if (Object.keys(next).length > 0) return;
-
+  const handleSave = handleSubmit((values) => {
     const saved: ApprovalForm = {
       id: form?.id ?? createId("form"),
-      name: draft.name.trim(),
-      category: draft.category.trim(),
-      description: draft.description.trim(),
-      fields: draft.fields.map((f) => ({
-        ...f,
-        label: f.label.trim(),
-        placeholder: f.placeholder?.trim() || undefined,
-      })),
-      approverIds: draft.approverIds,
+      ...values,
       active: form?.active ?? true,
       updatedAt: new Date().toISOString(),
     };
@@ -160,7 +151,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
         : [...prev.approvalForms, saved],
     }));
     onClose();
-  };
+  });
 
   return (
     <Modal
@@ -186,25 +177,23 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
         )}
 
         <FormGrid>
-          <Field label="양식 이름" required error={errors.name}>
+          <Field label="양식 이름" required error={errors.name?.message}>
             {(id) => (
               <Input
                 id={id}
-                value={draft.name}
                 placeholder="예: 지출결의서"
                 aria-invalid={!!errors.name || undefined}
-                onChange={(e) => patch({ name: e.target.value })}
+                {...register("name")}
               />
             )}
           </Field>
-          <Field label="카테고리" required error={errors.category}>
+          <Field label="카테고리" required error={errors.category?.message}>
             {(id) => (
               <Input
                 id={id}
-                value={draft.category}
                 placeholder="예: 재무, 인사, 총무"
                 aria-invalid={!!errors.category || undefined}
-                onChange={(e) => patch({ category: e.target.value })}
+                {...register("category")}
               />
             )}
           </Field>
@@ -213,10 +202,9 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
               {(id) => (
                 <Textarea
                   id={id}
-                  value={draft.description}
                   style={{ minHeight: 72 }}
                   placeholder="양식 용도를 간단히 설명하세요."
-                  onChange={(e) => patch({ description: e.target.value })}
+                  {...register("description")}
                 />
               )}
             </Field>
@@ -229,31 +217,23 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
             <Button
               $variant="secondary"
               $size="sm"
-              onClick={() =>
-                patch({
-                  fields: [...draft.fields, { id: createId("fld"), label: "", type: "text", required: false }],
-                })
-              }
+              onClick={() => append({ id: createId("fld"), label: "", type: "text", required: false })}
             >
               <Plus />
               항목 추가
             </Button>
           </Row>
           <Stack $gap={8}>
-            {draft.fields.map((field, index) => (
+            {fields.map((field, index) => (
               <ItemBox key={field.id}>
                 <FieldRow>
                   <Input
-                    value={field.label}
                     placeholder={`항목 ${index + 1} 이름`}
                     aria-label="항목 이름"
-                    onChange={(e) => patchField(field.id, { label: e.target.value })}
+                    aria-invalid={!!errors.fields?.[index]?.label || undefined}
+                    {...register(`fields.${index}.label`)}
                   />
-                  <Select
-                    value={field.type}
-                    aria-label="입력 타입"
-                    onChange={(e) => patchField(field.id, { type: e.target.value as FormFieldType })}
-                  >
+                  <Select aria-label="입력 타입" {...register(`fields.${index}.type`)}>
                     {Object.entries(FORM_FIELD_TYPES).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
@@ -261,40 +241,28 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
                     ))}
                   </Select>
                   <Input
-                    value={field.placeholder ?? ""}
                     placeholder="안내 문구 (선택)"
                     aria-label="안내 문구"
-                    onChange={(e) => patchField(field.id, { placeholder: e.target.value })}
+                    {...register(`fields.${index}.placeholder`)}
                   />
                 </FieldRow>
                 <Row $justify="space-between">
                   <CheckboxLabel>
-                    <input
-                      type="checkbox"
-                      checked={field.required}
-                      onChange={(e) => patchField(field.id, { required: e.target.checked })}
-                    />
+                    <input type="checkbox" {...register(`fields.${index}.required`)} />
                     필수 입력
                   </CheckboxLabel>
                   <Row $gap={2}>
-                    <IconButton
-                      aria-label="위로"
-                      disabled={index === 0}
-                      onClick={() => patch({ fields: move(draft.fields, index, -1) })}
-                    >
+                    <IconButton aria-label="위로" disabled={index === 0} onClick={() => swap(index, index - 1)}>
                       <ArrowUp />
                     </IconButton>
                     <IconButton
                       aria-label="아래로"
-                      disabled={index === draft.fields.length - 1}
-                      onClick={() => patch({ fields: move(draft.fields, index, 1) })}
+                      disabled={index === fields.length - 1}
+                      onClick={() => swap(index, index + 1)}
                     >
                       <ArrowDown />
                     </IconButton>
-                    <IconButton
-                      aria-label="항목 삭제"
-                      onClick={() => patch({ fields: draft.fields.filter((f) => f.id !== field.id) })}
-                    >
+                    <IconButton aria-label="항목 삭제" onClick={() => remove(index)}>
                       <Trash2 />
                     </IconButton>
                   </Row>
@@ -302,7 +270,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
               </ItemBox>
             ))}
           </Stack>
-          {errors.fields && <ErrorText style={{ marginTop: 8 }}>{errors.fields}</ErrorText>}
+          {fieldsError && <ErrorText style={{ marginTop: 8 }}>{fieldsError}</ErrorText>}
         </div>
 
         <div>
@@ -321,7 +289,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
               $variant="secondary"
               disabled={!candidate}
               onClick={() => {
-                patch({ approverIds: [...draft.approverIds, candidate] });
+                setApproverIds([...approverIds, candidate]);
                 setCandidate("");
               }}
             >
@@ -330,7 +298,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
             </Button>
           </Row>
           <ol>
-            {draft.approverIds.map((approverId, index) => {
+            {approverIds.map((approverId, index) => {
               const member = getMember(data, approverId);
               return (
                 <ApproverRow key={approverId}>
@@ -345,20 +313,20 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
                   <IconButton
                     aria-label="위로"
                     disabled={index === 0}
-                    onClick={() => patch({ approverIds: move(draft.approverIds, index, -1) })}
+                    onClick={() => setApproverIds(move(approverIds, index, -1))}
                   >
                     <ArrowUp />
                   </IconButton>
                   <IconButton
                     aria-label="아래로"
-                    disabled={index === draft.approverIds.length - 1}
-                    onClick={() => patch({ approverIds: move(draft.approverIds, index, 1) })}
+                    disabled={index === approverIds.length - 1}
+                    onClick={() => setApproverIds(move(approverIds, index, 1))}
                   >
                     <ArrowDown />
                   </IconButton>
                   <IconButton
                     aria-label="결재자 제거"
-                    onClick={() => patch({ approverIds: draft.approverIds.filter((id) => id !== approverId) })}
+                    onClick={() => setApproverIds(approverIds.filter((id) => id !== approverId))}
                   >
                     <Trash2 />
                   </IconButton>
@@ -366,7 +334,7 @@ function Editor({ form, onClose }: { form: ApprovalForm | null; onClose: () => v
               );
             })}
           </ol>
-          {errors.approvers && <ErrorText style={{ marginTop: 8 }}>{errors.approvers}</ErrorText>}
+          {approversError && <ErrorText style={{ marginTop: 8 }}>{approversError.message}</ErrorText>}
         </div>
       </Stack>
     </Modal>

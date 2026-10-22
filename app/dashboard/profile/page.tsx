@@ -1,9 +1,11 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { KeyRound, RotateCcw, Save, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import {
   Avatar,
   Badge,
@@ -22,6 +24,12 @@ import {
 import { getUsedLeaveDays } from "@/lib/attendance";
 import { formatDate } from "@/lib/date";
 import { MEMBER_STATUS, ROLE_LABELS } from "@/lib/labels";
+import {
+  type PasswordChangeFormValues,
+  passwordChangeSchema,
+  type ProfileFormValues,
+  profileSchema,
+} from "@/lib/schemas/account";
 import { getDepartmentName } from "@/lib/selectors";
 import { useAuth, useCurrentUser, useData } from "@/lib/store";
 import type { MemberStatus } from "@/lib/types";
@@ -91,64 +99,66 @@ const Feedback = styled.span<{ error?: boolean }>`
   color: ${({ theme, error }) => (error ? theme.colors.danger : theme.colors.success)};
 `;
 
-const PHONE_PATTERN = /^\d{2,3}-\d{3,4}-\d{4}$/;
-
 export default function ProfilePage() {
   const router = useRouter();
-  const { data, update, reset } = useData();
+  // RHF의 reset과 구분하기 위해 데이터 초기화는 resetData로 받는다.
+  const { data, update, reset: resetData } = useData();
   const { logout } = useAuth();
   const user = useCurrentUser();
 
-  const [phone, setPhone] = useState(user.phone);
-  const [extension, setExtension] = useState(user.extension);
-  const [status, setStatus] = useState<MemberStatus>(user.status);
-  const [infoMessage, setInfoMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const infoForm = useForm<ProfileFormValues>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: { phone: user.phone, extension: user.extension, status: user.status },
+  });
+  const [infoSaved, setInfoSaved] = useState(false);
 
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [nextPassword, setNextPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordMessage, setPasswordMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const passwordForm = useForm<PasswordChangeFormValues>({
+    resolver: zodResolver(passwordChangeSchema),
+    defaultValues: { currentPassword: "", nextPassword: "", confirmPassword: "" },
+  });
+  const [passwordChanged, setPasswordChanged] = useState(false);
 
   const [resetOpen, setResetOpen] = useState(false);
 
   const usedLeave = getUsedLeaveDays(data.leaveRequests, user.id);
 
-  const saveInfo = () => {
-    if (!PHONE_PATTERN.test(phone)) {
-      setInfoMessage({ text: "휴대폰 번호 형식을 확인해 주세요. (예: 010-1234-5678)", error: true });
-      return;
-    }
-    update((prev) => ({
-      ...prev,
-      members: prev.members.map((m) => (m.id === user.id ? { ...m, phone, extension, status } : m)),
-    }));
-    setInfoMessage({ text: "저장되었습니다." });
-  };
+  const infoErrors = infoForm.formState.errors;
+  const saveInfo = infoForm.handleSubmit(
+    ({ phone, extension, status }) => {
+      update((prev) => ({
+        ...prev,
+        members: prev.members.map((m) => (m.id === user.id ? { ...m, phone, extension, status } : m)),
+      }));
+      setInfoSaved(true);
+    },
+    () => setInfoSaved(false),
+  );
+  const infoError = infoErrors.phone?.message;
 
-  const changePassword = () => {
-    if (currentPassword !== user.password) {
-      setPasswordMessage({ text: "현재 비밀번호가 올바르지 않습니다.", error: true });
-      return;
-    }
-    if (nextPassword.length < 8) {
-      setPasswordMessage({ text: "새 비밀번호는 8자 이상이어야 합니다.", error: true });
-      return;
-    }
-    if (nextPassword !== confirmPassword) {
-      setPasswordMessage({ text: "새 비밀번호가 일치하지 않습니다.", error: true });
-      return;
-    }
-    update((prev) => ({
-      ...prev,
-      members: prev.members.map((m) =>
-        m.id === user.id ? { ...m, password: nextPassword, mustChangePassword: false } : m,
-      ),
-    }));
-    setCurrentPassword("");
-    setNextPassword("");
-    setConfirmPassword("");
-    setPasswordMessage({ text: "비밀번호가 변경되었습니다." });
-  };
+  const passwordErrors = passwordForm.formState.errors;
+  const changePassword = passwordForm.handleSubmit(
+    ({ currentPassword, nextPassword }) => {
+      // 현재 비밀번호는 사용자 데이터와 비교해야 하므로 제출 시점에 검사한다.
+      if (currentPassword !== user.password) {
+        setPasswordChanged(false);
+        passwordForm.setError("currentPassword", { message: "현재 비밀번호가 올바르지 않습니다." });
+        return;
+      }
+      update((prev) => ({
+        ...prev,
+        members: prev.members.map((m) =>
+          m.id === user.id ? { ...m, password: nextPassword, mustChangePassword: false } : m,
+        ),
+      }));
+      passwordForm.reset();
+      setPasswordChanged(true);
+    },
+    () => setPasswordChanged(false),
+  );
+  const passwordError =
+    passwordErrors.currentPassword?.message ??
+    passwordErrors.nextPassword?.message ??
+    passwordErrors.confirmPassword?.message;
 
   return (
     <>
@@ -188,7 +198,7 @@ export default function ProfilePage() {
               </Field>
               <Field label="근무 상태">
                 {(id) => (
-                  <Select id={id} value={status} onChange={(e) => setStatus(e.target.value as MemberStatus)}>
+                  <Select id={id} {...infoForm.register("status")}>
                     {(Object.keys(MEMBER_STATUS) as MemberStatus[]).map((s) => (
                       <option key={s} value={s}>
                         {MEMBER_STATUS[s].label}
@@ -199,15 +209,20 @@ export default function ProfilePage() {
               </Field>
               <Field label="휴대폰" required>
                 {(id) => (
-                  <Input id={id} value={phone} placeholder="010-1234-5678" onChange={(e) => setPhone(e.target.value)} />
+                  <Input
+                    id={id}
+                    placeholder="010-1234-5678"
+                    aria-invalid={!!infoErrors.phone}
+                    {...infoForm.register("phone")}
+                  />
                 )}
               </Field>
               <Field label="내선번호">
-                {(id) => <Input id={id} value={extension} onChange={(e) => setExtension(e.target.value)} />}
+                {(id) => <Input id={id} {...infoForm.register("extension")} />}
               </Field>
             </FormGrid>
             <Actions>
-              {infoMessage && <Feedback error={infoMessage.error}>{infoMessage.text}</Feedback>}
+              {infoError ? <Feedback error>{infoError}</Feedback> : infoSaved && <Feedback>저장되었습니다.</Feedback>}
               <Button onClick={saveInfo}>
                 <Save />
                 저장
@@ -229,8 +244,8 @@ export default function ProfilePage() {
                     id={id}
                     type="password"
                     autoComplete="current-password"
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    aria-invalid={!!passwordErrors.currentPassword}
+                    {...passwordForm.register("currentPassword")}
                   />
                 )}
               </Field>
@@ -241,8 +256,8 @@ export default function ProfilePage() {
                     id={id}
                     type="password"
                     autoComplete="new-password"
-                    value={nextPassword}
-                    onChange={(e) => setNextPassword(e.target.value)}
+                    aria-invalid={!!passwordErrors.nextPassword}
+                    {...passwordForm.register("nextPassword")}
                   />
                 )}
               </Field>
@@ -252,14 +267,18 @@ export default function ProfilePage() {
                     id={id}
                     type="password"
                     autoComplete="new-password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    aria-invalid={!!passwordErrors.confirmPassword}
+                    {...passwordForm.register("confirmPassword")}
                   />
                 )}
               </Field>
             </FormGrid>
             <Actions>
-              {passwordMessage && <Feedback error={passwordMessage.error}>{passwordMessage.text}</Feedback>}
+              {passwordError ? (
+                <Feedback error>{passwordError}</Feedback>
+              ) : (
+                passwordChanged && <Feedback>비밀번호가 변경되었습니다.</Feedback>
+              )}
               <Button onClick={changePassword}>비밀번호 변경</Button>
             </Actions>
           </Card>
@@ -292,7 +311,7 @@ export default function ProfilePage() {
         danger
         onClose={() => setResetOpen(false)}
         onConfirm={() => {
-          reset();
+          resetData();
           logout();
           router.replace("/login");
         }}

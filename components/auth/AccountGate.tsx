@@ -1,10 +1,12 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Ban, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useForm } from "react-hook-form";
 import { Button, Field, Input, Stack } from "@/components/ui";
+import { type InitialPasswordFormValues, initialPasswordSchema } from "@/lib/schemas/account";
 import { useAuth, useCurrentUser, useData } from "@/lib/store";
 
 const Screen = styled.div`
@@ -82,22 +84,28 @@ export function PasswordChangeScreen() {
   const { update } = useData();
   const user = useCurrentUser();
   const logout = useLogoutToLogin();
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState("");
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors },
+  } = useForm<InitialPasswordFormValues>({
+    resolver: zodResolver(initialPasswordSchema),
+    defaultValues: { password: "", confirm: "" },
+  });
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password.length < 8) return setError("비밀번호는 8자 이상이어야 합니다.");
-    if (password === user.password) return setError("초기 비밀번호와 다른 비밀번호를 입력하세요.");
-    if (password !== confirm) return setError("비밀번호가 일치하지 않습니다.");
+  const submit = handleSubmit(({ password }) => {
+    if (password === user.password)
+      return setError("password", { message: "초기 비밀번호와 다른 비밀번호를 입력하세요." });
     update((prev) => ({
       ...prev,
       members: prev.members.map((m) =>
         m.id === user.id ? { ...m, password, mustChangePassword: false } : m,
       ),
     }));
-  };
+  });
+
+  const error = errors.password?.message ?? errors.confirm?.message;
 
   return (
     <Screen>
@@ -113,12 +121,9 @@ export function PasswordChangeScreen() {
                   id={id}
                   type="password"
                   autoComplete="new-password"
-                  value={password}
                   autoFocus
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setError("");
-                  }}
+                  aria-invalid={!!errors.password}
+                  {...register("password")}
                 />
               )}
             </Field>
@@ -128,11 +133,8 @@ export function PasswordChangeScreen() {
                   id={id}
                   type="password"
                   autoComplete="new-password"
-                  value={confirm}
-                  onChange={(e) => {
-                    setConfirm(e.target.value);
-                    setError("");
-                  }}
+                  aria-invalid={!!errors.confirm}
+                  {...register("confirm")}
                 />
               )}
             </Field>

@@ -1,12 +1,14 @@
 "use client";
 
 import styled from "@emotion/styled";
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm, useWatch } from "react-hook-form";
 import { Button, Field, FormGrid, Input, Modal, Select, Textarea } from "@/components/ui";
 import { getUsedLeaveDays } from "@/lib/attendance";
-import { countWeekdays, todayKey } from "@/lib/date";
+import { todayKey } from "@/lib/date";
 import { createId } from "@/lib/id";
 import { LEAVE_TYPES } from "@/lib/labels";
+import { getLeavePeriod, type LeaveRequestFormValues, leaveRequestSchema } from "@/lib/schemas/attendance";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { LeaveType } from "@/lib/types";
 import { isAnnualType } from "./utils";
@@ -35,23 +37,30 @@ interface Props {
   onClose: () => void;
 }
 
+const createDefaultValues = (): LeaveRequestFormValues => ({
+  type: "annual",
+  startDate: todayKey(),
+  endDate: todayKey(),
+  reason: "",
+});
+
 export function LeaveRequestModal({ open, onClose }: Props) {
   const { data, update } = useData();
   const user = useCurrentUser();
-  const [type, setType] = useState<LeaveType>("annual");
-  const [startDate, setStartDate] = useState(() => todayKey());
-  const [endDate, setEndDate] = useState(() => todayKey());
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState("");
+  const {
+    register,
+    handleSubmit,
+    control,
+    reset,
+    setError,
+    formState: { errors },
+  } = useForm<LeaveRequestFormValues>({
+    resolver: zodResolver(leaveRequestSchema),
+    defaultValues: createDefaultValues(),
+  });
 
-  const isHalf = LEAVE_TYPES[type].days !== null;
-  const effectiveEnd = isHalf ? startDate : endDate;
-  const days =
-    !startDate || !effectiveEnd || effectiveEnd < startDate
-      ? 0
-      : isHalf
-        ? 0.5
-        : countWeekdays(startDate, effectiveEnd);
+  const [type, startDate, endDate] = useWatch({ control, name: ["type", "startDate", "endDate"] });
+  const { isHalf, days } = getLeavePeriod(type, startDate, endDate);
 
   const used = getUsedLeaveDays(data.leaveRequests, user.id);
   const pending = data.leaveRequests
@@ -59,36 +68,24 @@ export function LeaveRequestModal({ open, onClose }: Props) {
     .reduce((sum, r) => sum + r.days, 0);
   const available = user.annualLeaveTotal - used - pending;
 
-  const reset = () => {
-    setType("annual");
-    setStartDate(todayKey());
-    setEndDate(todayKey());
-    setReason("");
-    setError("");
-  };
-
   const close = () => {
-    reset();
+    reset(createDefaultValues());
     onClose();
   };
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!startDate || !effectiveEnd) return setError("기간을 입력하세요.");
-    if (effectiveEnd < startDate) return setError("종료일이 시작일보다 빠릅니다.");
-    if (days <= 0) return setError("선택한 기간에 평일이 없습니다.");
-    if (isAnnualType(type) && days > available) {
-      return setError(`사용 가능한 연차(${available}일)를 초과합니다.`);
+  const submit = handleSubmit((values) => {
+    const period = getLeavePeriod(values.type, values.startDate, values.endDate);
+    if (isAnnualType(values.type) && period.days > available) {
+      return setError("root", { message: `사용 가능한 연차(${available}일)를 초과합니다.` });
     }
     const overlap = data.leaveRequests.some(
       (r) =>
         r.memberId === user.id &&
         r.status !== "rejected" &&
-        r.startDate <= effectiveEnd &&
-        r.endDate >= startDate,
+        r.startDate <= period.endDate &&
+        r.endDate >= values.startDate,
     );
-    if (overlap) return setError("이미 신청한 휴가와 기간이 겹칩니다.");
-    if (!reason.trim()) return setError("사유를 입력하세요.");
+    if (overlap) return setError("root", { message: "이미 신청한 휴가와 기간이 겹칩니다." });
 
     update((prev) => ({
       ...prev,
@@ -97,18 +94,18 @@ export function LeaveRequestModal({ open, onClose }: Props) {
         {
           id: createId("l"),
           memberId: user.id,
-          type,
-          startDate,
-          endDate: effectiveEnd,
-          days,
-          reason: reason.trim(),
+          type: values.type,
+          startDate: values.startDate,
+          endDate: period.endDate,
+          days: period.days,
+          reason: values.reason,
           status: "pending",
           createdAt: new Date().toISOString(),
         },
       ],
     }));
     close();
-  };
+  });
 
   return (
     <Modal
@@ -126,12 +123,12 @@ export function LeaveRequestModal({ open, onClose }: Props) {
         </>
       }
     >
-      <form id="leave-request-form" onSubmit={submit}>
+      <form id="leave-request-form" onSubmit={submit} noValidate>
         <FormGrid>
           <div data-span="full">
             <Field label="휴가 유형" required>
               {(id) => (
-                <Select id={id} value={type} onChange={(e) => setType(e.target.value as LeaveType)}>
+                <Select id={id} {...register("type")}>
                   {(Object.keys(LEAVE_TYPES) as LeaveType[]).map((key) => (
                     <option key={key} value={key}>
                       {LEAVE_TYPES[key].label}
@@ -142,34 +139,32 @@ export function LeaveRequestModal({ open, onClose }: Props) {
             </Field>
           </div>
           <div data-span={isHalf ? "full" : undefined}>
-            <Field label={isHalf ? "날짜" : "시작일"} required>
-              {(id) => (
-                <Input id={id} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-              )}
+            <Field label={isHalf ? "날짜" : "시작일"} required error={errors.startDate?.message}>
+              {(id) => <Input id={id} type="date" aria-invalid={!!errors.startDate} {...register("startDate")} />}
             </Field>
           </div>
           {!isHalf && (
-            <Field label="종료일" required>
+            <Field label="종료일" required error={errors.endDate?.message}>
               {(id) => (
                 <Input
                   id={id}
                   type="date"
-                  value={endDate}
                   min={startDate}
-                  onChange={(e) => setEndDate(e.target.value)}
+                  aria-invalid={!!errors.endDate}
+                  {...register("endDate")}
                 />
               )}
             </Field>
           )}
           <div data-span="full">
-            <Field label="사유" required>
+            <Field label="사유" required error={errors.reason?.message}>
               {(id) => (
                 <Textarea
                   id={id}
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
                   placeholder="휴가 사유를 입력하세요"
                   style={{ minHeight: 88 }}
+                  aria-invalid={!!errors.reason}
+                  {...register("reason")}
                 />
               )}
             </Field>
@@ -185,7 +180,7 @@ export function LeaveRequestModal({ open, onClose }: Props) {
           )}
           {!isAnnualType(type) && " · 연차에서 차감되지 않습니다."}
         </Summary>
-        {error && <ErrorText role="alert">{error}</ErrorText>}
+        {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
       </form>
     </Modal>
   );

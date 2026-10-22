@@ -1,8 +1,10 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { CheckCircle2, Lock, Pencil } from "lucide-react";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import {
   Button,
   Card,
@@ -15,15 +17,14 @@ import {
   PageHeader,
   Stack,
 } from "@/components/ui";
-import {
-  COMPANY_SECTIONS as SECTIONS,
-  type CompanyErrors,
-  type CompanyForm as FormState,
-  fromCompanyForm,
-  toCompanyForm as toForm,
-  validateCompany,
-} from "@/lib/company";
+import { COMPANY_SECTIONS as SECTIONS } from "@/lib/company";
 import { isBusinessNumberTaken } from "@/lib/platform";
+import {
+  type CompanyFormInput,
+  type CompanyFormValues,
+  companySchema,
+  toCompanyFormInput,
+} from "@/lib/schemas/company";
 import { useCurrentUser, useData, usePlatform } from "@/lib/store";
 
 const ReadValue = styled.p`
@@ -48,30 +49,33 @@ export function CompanyInfoView() {
   const { platform } = usePlatform();
   const user = useCurrentUser();
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState<FormState>(() => toForm(data.company));
-  const [errors, setErrors] = useState<CompanyErrors>({});
   const [saved, setSaved] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors },
+  } = useForm<CompanyFormInput, unknown, CompanyFormValues>({
+    resolver: zodResolver(companySchema),
+    defaultValues: toCompanyFormInput(data.company),
+  });
 
   const startEdit = () => {
-    setForm(toForm(data.company));
-    setErrors({});
+    reset(toCompanyFormInput(data.company));
     setSaved(false);
     setEditing(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    const next = validateCompany(form);
-    if (!next.businessNumber && isBusinessNumberTaken(platform, form.businessNumber, tenantId)) {
-      next.businessNumber = "ChoiHub에 이미 등록된 사업자등록번호입니다.";
+  const handleSave = handleSubmit((values) => {
+    if (isBusinessNumberTaken(platform, values.businessNumber, tenantId)) {
+      return setError("businessNumber", { message: "ChoiHub에 이미 등록된 사업자등록번호입니다." });
     }
-    setErrors(next);
-    if (Object.keys(next).length > 0) return;
 
-    update((prev) => ({ ...prev, company: fromCompanyForm(form) }));
+    update((prev) => ({ ...prev, company: values }));
     setEditing(false);
     setSaved(true);
-  };
+  });
 
   return (
     <form onSubmit={handleSave} noValidate>
@@ -122,18 +126,17 @@ export function CompanyInfoView() {
                     label={field.label}
                     required={editing && field.required}
                     hint={editing ? field.hint : undefined}
-                    error={editing ? errors[field.key] : undefined}
+                    error={editing ? errors[field.key]?.message : undefined}
                   >
                     {(id) =>
                       editing ? (
                         <Input
                           id={id}
                           type={field.type ?? "text"}
-                          value={form[field.key]}
                           placeholder={field.placeholder}
                           min={field.type === "number" ? 0 : undefined}
                           aria-invalid={!!errors[field.key] || undefined}
-                          onChange={(e) => setForm((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                          {...register(field.key)}
                         />
                       ) : (
                         <ReadValue id={id}>

@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
 import { Button, Field, Input, Modal, Select, Stack } from "@/components/ui";
 import { createId } from "@/lib/id";
+import { type DepartmentFormValues, departmentSchema } from "@/lib/schemas/member";
 import { useData } from "@/lib/store";
 import { flattenDepartments } from "./OrgTree";
 
@@ -13,23 +15,26 @@ interface Props {
 
 export function DepartmentFormModal({ defaultParentId, onClose }: Props) {
   const { data, update } = useData();
-  const [name, setName] = useState("");
-  const [parentId, setParentId] = useState(defaultParentId ?? "");
-  const [error, setError] = useState<string>();
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors },
+  } = useForm<DepartmentFormValues>({
+    resolver: zodResolver(departmentSchema),
+    defaultValues: { name: "", parentId: defaultParentId ?? "" },
+  });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) return setError("부서명을 입력하세요.");
-    if (data.departments.some((d) => d.name === trimmed && (d.parentId ?? "") === parentId))
-      return setError("같은 위치에 동일한 이름의 부서가 있습니다.");
+  const submit = handleSubmit(({ name, parentId }) => {
+    if (data.departments.some((d) => d.name === name && (d.parentId ?? "") === parentId))
+      return setError("name", { message: "같은 위치에 동일한 이름의 부서가 있습니다." });
 
     update((prev) => ({
       ...prev,
-      departments: [...prev.departments, { id: createId("d"), name: trimmed, parentId: parentId || null }],
+      departments: [...prev.departments, { id: createId("d"), name, parentId: parentId || null }],
     }));
     onClose();
-  };
+  });
 
   return (
     <Modal
@@ -48,25 +53,21 @@ export function DepartmentFormModal({ defaultParentId, onClose }: Props) {
         </>
       }
     >
-      <form id="department-form" onSubmit={handleSubmit} noValidate>
+      <form id="department-form" onSubmit={submit} noValidate>
         <Stack>
-          <Field label="부서명" required error={error}>
+          <Field label="부서명" required error={errors.name?.message}>
             {(id) => (
               <Input
                 id={id}
-                value={name}
                 autoFocus
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setError(undefined);
-                }}
-                aria-invalid={!!error}
+                aria-invalid={!!errors.name}
+                {...register("name")}
               />
             )}
           </Field>
           <Field label="상위 부서" hint="선택하지 않으면 최상위 부서로 추가됩니다.">
             {(id) => (
-              <Select id={id} value={parentId} onChange={(e) => setParentId(e.target.value)}>
+              <Select id={id} {...register("parentId")}>
                 <option value="">(최상위)</option>
                 {flattenDepartments(data).map(({ department, depth }) => (
                   <option key={department.id} value={department.id}>

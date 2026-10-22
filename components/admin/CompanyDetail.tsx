@@ -1,8 +1,10 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, Ban, KeyRound, Pencil, Play, UserPlus } from "lucide-react";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import { CredentialCard } from "@/components/common/CredentialCard";
 import {
   Badge,
@@ -23,21 +25,23 @@ import {
   Table,
   TableWrap,
 } from "@/components/ui";
-import {
-  type CompanyErrors,
-  type CompanyForm,
-  fromCompanyForm,
-  toCompanyForm,
-  validateCompany,
-} from "@/lib/company";
 import { formatDate } from "@/lib/date";
 import { createId } from "@/lib/id";
-import { generatePassword, isBusinessNumberTaken, pickAvatarColor } from "@/lib/platform";
+import { generatePassword, isBusinessNumberTaken, isEmailTaken, pickAvatarColor } from "@/lib/platform";
+import {
+  type CompanyFormInput,
+  type CompanyFormValues,
+  companySchema,
+  EMPTY_MANAGER,
+  type ManagerFormValues,
+  managerSchema,
+  toCompanyFormInput,
+} from "@/lib/schemas/company";
 import { usePlatform } from "@/lib/store";
 import type { GroupwareData, Member, Tenant } from "@/lib/types";
 import { mq } from "@/styles/theme";
 import { CompanyFields } from "./CompanyFields";
-import { EMPTY_MANAGER, type ManagerErrors, ManagerFields, type ManagerForm, validateManager } from "./ManagerFields";
+import { ManagerFields } from "./ManagerFields";
 
 const Summary = styled.div`
   display: grid;
@@ -74,14 +78,17 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
   const tenant = platform.tenants.find((t) => t.id === tenantId);
 
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState<CompanyForm | null>(null);
-  const [errors, setErrors] = useState<CompanyErrors>({});
   const [statusConfirm, setStatusConfirm] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  const [managerForm, setManagerForm] = useState<ManagerForm>(EMPTY_MANAGER);
-  const [managerErrors, setManagerErrors] = useState<ManagerErrors>({});
   const [resetTarget, setResetTarget] = useState<Member | null>(null);
   const [credential, setCredential] = useState<Credential | null>(null);
+  const companyForm = useForm<CompanyFormInput, unknown, CompanyFormValues>({
+    resolver: zodResolver(companySchema),
+  });
+  const managerForm = useForm<ManagerFormValues>({
+    resolver: zodResolver(managerSchema),
+    defaultValues: EMPTY_MANAGER,
+  });
 
   if (!tenant) {
     return (
@@ -109,38 +116,32 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
     updateTenant((t) => ({ ...t, data: updater(t.data) }));
 
   const startEdit = () => {
-    setForm(toCompanyForm(company));
-    setErrors({});
+    companyForm.reset(toCompanyFormInput(company));
     setEditing(true);
   };
 
-  const saveCompany = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form) return;
-    const next = validateCompany(form);
-    if (!next.businessNumber && isBusinessNumberTaken(platform, form.businessNumber, tenantId)) {
-      next.businessNumber = "이미 등록된 사업자등록번호입니다.";
+  const saveCompany = companyForm.handleSubmit((values) => {
+    if (isBusinessNumberTaken(platform, values.businessNumber, tenantId)) {
+      return companyForm.setError("businessNumber", { message: "이미 등록된 사업자등록번호입니다." });
     }
-    setErrors(next);
-    if (Object.keys(next).length > 0) return;
-    updateData((d) => ({ ...d, company: fromCompanyForm(form) }));
+    updateData((d) => ({ ...d, company: values }));
     setEditing(false);
-  };
+  });
 
-  const addManager = () => {
-    const next = validateManager(managerForm, platform);
-    setManagerErrors(next);
-    if (Object.keys(next).length > 0) return;
+  const addManager = managerForm.handleSubmit((values) => {
+    if (isEmailTaken(platform, values.email)) {
+      return managerForm.setError("email", { message: "이미 ChoiHub에서 사용 중인 이메일입니다." });
+    }
     const password = generatePassword();
     const member: Member = {
       id: createId("m"),
-      name: managerForm.name.trim(),
-      email: managerForm.email.trim(),
+      name: values.name,
+      email: values.email,
       password,
       role: "manager",
       departmentId: tenant.data.departments[0]?.id ?? "",
-      position: managerForm.position.trim() || "매니저",
-      phone: managerForm.phone.trim(),
+      position: values.position || "매니저",
+      phone: values.phone,
       extension: "",
       joinedAt: new Date().toISOString().slice(0, 10),
       birthday: "",
@@ -152,7 +153,7 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
     updateData((d) => ({ ...d, members: [...d.members, member] }));
     setAddOpen(false);
     setCredential({ title: "매니저 계정 발급 완료", name: member.name, email: member.email, password });
-  };
+  });
 
   const resetPassword = (target: Member) => {
     const password = generatePassword();
@@ -217,8 +218,7 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
             <Button
               $size="sm"
               onClick={() => {
-                setManagerForm(EMPTY_MANAGER);
-                setManagerErrors({});
+                managerForm.reset(EMPTY_MANAGER);
                 setAddOpen(true);
               }}
             >
@@ -288,10 +288,10 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
               )}
             </Card>
             <CompanyFields
-              form={editing && form ? form : toCompanyForm(company)}
-              errors={errors}
+              company={company}
               editing={editing}
-              onChange={(key, value) => setForm((prev) => (prev ? { ...prev, [key]: value } : prev))}
+              register={companyForm.register}
+              errors={companyForm.formState.errors}
             />
           </Stack>
         </form>
@@ -325,11 +325,7 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
           </>
         }
       >
-        <ManagerFields
-          form={managerForm}
-          errors={managerErrors}
-          onChange={(key, value) => setManagerForm((prev) => ({ ...prev, [key]: value }))}
-        />
+        <ManagerFields register={managerForm.register} errors={managerForm.formState.errors} />
       </Modal>
 
       <ConfirmModal
