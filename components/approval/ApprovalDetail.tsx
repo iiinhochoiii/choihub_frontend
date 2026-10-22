@@ -1,8 +1,10 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, Check, Undo2, X } from "lucide-react";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import {
   Badge,
   Button,
@@ -23,6 +25,7 @@ import {
 import { applyDecision, canWithdraw, isMyTurn } from "@/lib/approval";
 import { formatDateTime } from "@/lib/date";
 import { APPROVAL_DOC_STATUS, APPROVAL_STEP_STATUS } from "@/lib/labels";
+import { type ApprovalDecisionFormValues, approvalDecisionSchema } from "@/lib/schemas/approval";
 import { getMember, getMemberSummary } from "@/lib/selectors";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { ApprovalDocument } from "@/lib/types";
@@ -116,8 +119,16 @@ const History = styled.ol`
 export function ApprovalDetail({ id }: { id: string }) {
   const { data, update } = useData();
   const user = useCurrentUser();
-  const [comment, setComment] = useState("");
-  const [error, setError] = useState("");
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    reset,
+    formState: { errors },
+  } = useForm<ApprovalDecisionFormValues>({
+    resolver: zodResolver(approvalDecisionSchema),
+    defaultValues: { decision: "approved", comment: "" },
+  });
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
 
   const doc = data.approvalDocs.find((d) => d.id === id);
@@ -149,14 +160,15 @@ export function ApprovalDetail({ id }: { id: string }) {
       approvalDocs: prev.approvalDocs.map((d) => (d.id === next.id ? next : d)),
     }));
 
-  const decide = (decision: "approved" | "rejected") => {
-    if (decision === "rejected" && !comment.trim()) {
-      setError("반려 시 의견을 입력해야 합니다.");
-      return;
-    }
-    saveDoc(applyDecision(doc, user.id, decision, comment.trim()));
-    setComment("");
-    setError("");
+  const submitDecision = handleSubmit(({ decision, comment }) => {
+    saveDoc(applyDecision(doc, user.id, decision, comment));
+    reset();
+  });
+
+  /** 누른 버튼(승인/반려)을 폼 값으로 넣고 제출한다. 반려 의견 필수 여부는 스키마가 검사한다. */
+  const decide = (decision: ApprovalDecisionFormValues["decision"]) => {
+    setValue("decision", decision);
+    void submitDecision();
   };
 
   return (
@@ -223,15 +235,14 @@ export function ApprovalDetail({ id }: { id: string }) {
           <Card>
             <SectionTitle>결재 처리</SectionTitle>
             <Stack $gap={12}>
-              <Field label="결재 의견" hint="반려 시에는 의견을 반드시 입력하세요." error={error}>
+              <Field label="결재 의견" hint="반려 시에는 의견을 반드시 입력하세요." error={errors.comment?.message}>
                 {(fid) => (
                   <Textarea
                     id={fid}
-                    value={comment}
                     placeholder="의견을 입력하세요 (선택)"
                     style={{ minHeight: 88 }}
-                    aria-invalid={!!error || undefined}
-                    onChange={(e) => setComment(e.target.value)}
+                    aria-invalid={!!errors.comment || undefined}
+                    {...register("comment")}
                   />
                 )}
               </Field>

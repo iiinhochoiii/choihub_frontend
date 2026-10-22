@@ -1,6 +1,7 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Download,
   File,
@@ -16,6 +17,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
 import {
   Button,
   Card,
@@ -35,6 +37,7 @@ import {
   transientOptions,
 } from "@/components/ui";
 import { formatDate } from "@/lib/date";
+import { createFolderSchema, FOLDER_NAME_MAX, type FolderFormValues } from "@/lib/schemas/archive";
 import { getMemberName } from "@/lib/selectors";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { ArchiveFile } from "@/lib/types";
@@ -185,9 +188,18 @@ export function ArchiveView() {
   const [query, setQuery] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
-  const [newFolder, setNewFolder] = useState("");
-  const [folderError, setFolderError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ArchiveFile | null>(null);
+
+  const folderSchema = useMemo(() => createFolderSchema(data.archiveFolders), [data.archiveFolders]);
+  const {
+    register: registerFolder,
+    handleSubmit: handleFolderSubmit,
+    reset: resetFolderForm,
+    formState: { errors: folderErrors },
+  } = useForm<FolderFormValues>({
+    resolver: zodResolver(folderSchema),
+    defaultValues: { name: "" },
+  });
 
   const files = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -206,18 +218,14 @@ export function ArchiveView() {
 
   const closeFolderModal = () => {
     setFolderModalOpen(false);
-    setNewFolder("");
-    setFolderError("");
+    resetFolderForm();
   };
 
-  const handleAddFolder = () => {
-    const name = newFolder.trim();
-    if (!name) return setFolderError("폴더 이름을 입력하세요.");
-    if (data.archiveFolders.includes(name)) return setFolderError("이미 있는 폴더 이름입니다.");
+  const handleAddFolder = handleFolderSubmit(({ name }) => {
     update((prev) => ({ ...prev, archiveFolders: [...prev.archiveFolders, name] }));
     setFolder(name);
     closeFolderModal();
-  };
+  });
 
   const handleDelete = (file: ArchiveFile) =>
     update((prev) => ({ ...prev, archiveFiles: prev.archiveFiles.filter((f) => f.id !== file.id) }));
@@ -380,22 +388,19 @@ export function ArchiveView() {
           </>
         }
       >
-        <Field label="폴더 이름" required error={folderError}>
-          {(id) => (
-            <Input
-              id={id}
-              value={newFolder}
-              maxLength={30}
-              placeholder="예: 회계"
-              aria-invalid={!!folderError}
-              onChange={(e) => {
-                setNewFolder(e.target.value);
-                setFolderError("");
-              }}
-              onKeyDown={(e) => e.key === "Enter" && handleAddFolder()}
-            />
-          )}
-        </Field>
+        <form onSubmit={handleAddFolder} noValidate>
+          <Field label="폴더 이름" required error={folderErrors.name?.message}>
+            {(id) => (
+              <Input
+                id={id}
+                maxLength={FOLDER_NAME_MAX}
+                placeholder="예: 회계"
+                aria-invalid={!!folderErrors.name}
+                {...registerFolder("name")}
+              />
+            )}
+          </Field>
+        </form>
       </Modal>
 
       <ConfirmModal

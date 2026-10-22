@@ -1,7 +1,7 @@
 "use client";
 
-import styled from "@emotion/styled";
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import {
   Button,
   CheckboxLabel,
@@ -13,17 +13,11 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
-import { timeToMinutes } from "@/lib/date";
 import { createId } from "@/lib/id";
 import { EVENT_CATEGORIES } from "@/lib/labels";
+import { type EventFormValues, eventSchema } from "@/lib/schemas/schedule";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { EventCategory } from "@/lib/types";
-
-const ErrorText = styled.p`
-  margin-top: 12px;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.danger};
-`;
 
 interface Props {
   defaultDate: string;
@@ -34,15 +28,25 @@ interface Props {
 export function EventFormModal({ defaultDate, onClose }: Props) {
   const { update } = useData();
   const user = useCurrentUser();
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState(defaultDate);
-  const [allDay, setAllDay] = useState(false);
-  const [startTime, setStartTime] = useState("10:00");
-  const [endTime, setEndTime] = useState("11:00");
-  const [category, setCategory] = useState<EventCategory>("meeting");
-  const [description, setDescription] = useState("");
-  const [shared, setShared] = useState(true);
-  const [error, setError] = useState("");
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useForm<EventFormValues>({
+    resolver: zodResolver(eventSchema),
+    defaultValues: {
+      title: "",
+      date: defaultDate,
+      allDay: false,
+      startTime: "10:00",
+      endTime: "11:00",
+      category: "meeting",
+      description: "",
+      shared: true,
+    },
+  });
+  const [allDay, category] = useWatch({ control, name: ["allDay", "category"] });
 
   // 전사 일정은 매니저만 등록할 수 있고 항상 공개된다.
   const categories = (Object.keys(EVENT_CATEGORIES) as EventCategory[]).filter(
@@ -50,33 +54,27 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
   );
   const isCompany = category === "company";
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return setError("제목을 입력하세요.");
-    if (!date) return setError("날짜를 선택하세요.");
-    if (!allDay && timeToMinutes(endTime) <= timeToMinutes(startTime)) {
-      return setError("종료 시간은 시작 시간보다 늦어야 합니다.");
-    }
+  const submit = handleSubmit((values) => {
     update((prev) => ({
       ...prev,
       events: [
         ...prev.events,
         {
           id: createId("e"),
-          title: title.trim(),
-          date,
-          allDay,
-          startTime: allDay ? "09:00" : startTime,
-          endTime: allDay ? "18:00" : endTime,
-          category,
+          title: values.title,
+          date: values.date,
+          allDay: values.allDay,
+          startTime: values.allDay ? "09:00" : values.startTime,
+          endTime: values.allDay ? "18:00" : values.endTime,
+          category: values.category,
           ownerId: user.id,
-          description: description.trim(),
-          shared: isCompany || shared,
+          description: values.description,
+          shared: values.category === "company" || values.shared,
         },
       ],
     }));
     onClose();
-  };
+  });
 
   return (
     <Modal
@@ -94,27 +92,27 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
         </>
       }
     >
-      <form id="event-form" onSubmit={submit}>
+      <form id="event-form" onSubmit={submit} noValidate>
         <FormGrid>
           <div data-span="full">
-            <Field label="제목" required>
+            <Field label="제목" required error={errors.title?.message}>
               {(id) => (
                 <Input
                   id={id}
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
                   placeholder="일정 제목"
                   autoFocus
+                  aria-invalid={!!errors.title}
+                  {...register("title")}
                 />
               )}
             </Field>
           </div>
-          <Field label="날짜" required>
-            {(id) => <Input id={id} type="date" value={date} onChange={(e) => setDate(e.target.value)} />}
+          <Field label="날짜" required error={errors.date?.message}>
+            {(id) => <Input id={id} type="date" aria-invalid={!!errors.date} {...register("date")} />}
           </Field>
           <Field label="분류" required>
             {(id) => (
-              <Select id={id} value={category} onChange={(e) => setCategory(e.target.value as EventCategory)}>
+              <Select id={id} {...register("category")}>
                 {categories.map((key) => (
                   <option key={key} value={key}>
                     {EVENT_CATEGORIES[key].label}
@@ -125,20 +123,18 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
           </Field>
           <div data-span="full">
             <CheckboxLabel>
-              <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
+              <input type="checkbox" {...register("allDay")} />
               종일 일정
             </CheckboxLabel>
           </div>
           {!allDay && (
             <>
               <Field label="시작 시간" required>
-                {(id) => (
-                  <Input id={id} type="time" step={600} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-                )}
+                {(id) => <Input id={id} type="time" step={600} {...register("startTime")} />}
               </Field>
-              <Field label="종료 시간" required>
+              <Field label="종료 시간" required error={errors.endTime?.message}>
                 {(id) => (
-                  <Input id={id} type="time" step={600} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                  <Input id={id} type="time" step={600} aria-invalid={!!errors.endTime} {...register("endTime")} />
                 )}
               </Field>
             </>
@@ -148,10 +144,9 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
               {(id) => (
                 <Textarea
                   id={id}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
                   placeholder="장소, 참석자 등"
                   style={{ minHeight: 88 }}
+                  {...register("description")}
                 />
               )}
             </Field>
@@ -159,18 +154,27 @@ export function EventFormModal({ defaultDate, onClose }: Props) {
           <div data-span="full">
             <Row>
               <CheckboxLabel>
-                <input
-                  type="checkbox"
-                  checked={isCompany || shared}
-                  disabled={isCompany}
-                  onChange={(e) => setShared(e.target.checked)}
+                {/* 전사 일정은 항상 공개: disabled로 렌더링하되 값은 폼 상태로 유지한다. */}
+                <Controller
+                  control={control}
+                  name="shared"
+                  render={({ field }) => (
+                    <input
+                      ref={field.ref}
+                      type="checkbox"
+                      name={field.name}
+                      checked={isCompany || field.value}
+                      disabled={isCompany}
+                      onChange={(e) => field.onChange(e.target.checked)}
+                      onBlur={field.onBlur}
+                    />
+                  )}
                 />
                 전 직원에게 공개
               </CheckboxLabel>
             </Row>
           </div>
         </FormGrid>
-        {error && <ErrorText role="alert">{error}</ErrorText>}
       </form>
     </Modal>
   );

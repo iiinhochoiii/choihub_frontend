@@ -1,10 +1,12 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Info, Upload } from "lucide-react";
-import { useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { Button, Field, Modal, Notice, Select, Stack, Textarea } from "@/components/ui";
 import { createId } from "@/lib/id";
+import { FILE_DESCRIPTION_MAX, type UploadFormValues, uploadSchema } from "@/lib/schemas/archive";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { ArchiveFile } from "@/lib/types";
 import { formatFileSize, MAX_STORED_FILE_SIZE, readAsDataUrl } from "./format";
@@ -66,29 +68,31 @@ interface UploadModalProps {
 export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) {
   const { data, update } = useData();
   const user = useCurrentUser();
-  const [file, setFile] = useState<File | null>(null);
-  const [folder, setFolder] = useState(defaultFolder);
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const {
+    register,
+    control,
+    handleSubmit,
+    getValues,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<UploadFormValues>({
+    resolver: zodResolver(uploadSchema),
+    // 파일은 선택 전까지 비워 둔다.
+    defaultValues: { folder: defaultFolder ?? "", description: "" },
+  });
+  const file = useWatch({ control, name: "file" });
 
   const tooLarge = !!file && file.size > MAX_STORED_FILE_SIZE;
 
   const handleClose = () => {
-    setFile(null);
-    setDescription("");
-    setError("");
+    // 선택한 폴더는 유지하고 파일·설명만 비운다.
+    reset({ folder: getValues("folder"), description: "" });
     onClose();
   };
 
-  const handleSubmit = async () => {
-    if (!file) {
-      setError("업로드할 파일을 선택하세요.");
-      return;
-    }
-    setSaving(true);
+  const submit = handleSubmit(async ({ file, folder, description }) => {
     let dataUrl: string | undefined;
-    if (!tooLarge) {
+    if (file.size <= MAX_STORED_FILE_SIZE) {
       try {
         dataUrl = await readAsDataUrl(file);
       } catch {
@@ -103,13 +107,12 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
       mimeType: file.type || "application/octet-stream",
       uploaderId: user.id,
       uploadedAt: new Date().toISOString(),
-      description: description.trim(),
+      description,
       dataUrl,
     };
     update((prev) => ({ ...prev, archiveFiles: [entry, ...prev.archiveFiles] }));
-    setSaving(false);
     handleClose();
-  };
+  });
 
   return (
     <Modal
@@ -121,8 +124,8 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
           <Button $variant="secondary" onClick={handleClose}>
             취소
           </Button>
-          <Button onClick={handleSubmit} disabled={saving}>
-            {saving ? "업로드 중..." : "업로드"}
+          <Button onClick={submit} disabled={isSubmitting}>
+            {isSubmitting ? "업로드 중..." : "업로드"}
           </Button>
         </>
       }
@@ -133,16 +136,22 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
             <Upload />
             <strong>{file ? file.name : "클릭해서 파일 선택"}</strong>
             <small>{file ? formatFileSize(file.size) : "모든 형식의 파일을 올릴 수 있습니다."}</small>
-            <input
-              type="file"
-              aria-label="업로드할 파일"
-              onChange={(e) => {
-                setFile(e.target.files?.[0] ?? null);
-                setError("");
-              }}
+            <Controller
+              control={control}
+              name="file"
+              render={({ field: { name, ref, onBlur, onChange } }) => (
+                <input
+                  ref={ref}
+                  type="file"
+                  name={name}
+                  aria-label="업로드할 파일"
+                  onBlur={onBlur}
+                  onChange={(e) => onChange(e.target.files?.[0])}
+                />
+              )}
             />
           </DropZone>
-          {error && <ErrorText>{error}</ErrorText>}
+          {errors.file && <ErrorText>{errors.file.message}</ErrorText>}
         </div>
 
         {tooLarge && (
@@ -155,9 +164,9 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
           </Notice>
         )}
 
-        <Field label="폴더" required>
+        <Field label="폴더" required error={errors.folder?.message}>
           {(id) => (
-            <Select id={id} value={folder} onChange={(e) => setFolder(e.target.value)}>
+            <Select id={id} aria-invalid={!!errors.folder} {...register("folder")}>
               {data.archiveFolders.map((f) => (
                 <option key={f} value={f}>
                   {f}
@@ -173,9 +182,8 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
               id={id}
               style={{ minHeight: 80 }}
               placeholder="파일에 대한 간단한 설명 (선택)"
-              maxLength={200}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              maxLength={FILE_DESCRIPTION_MAX}
+              {...register("description")}
             />
           )}
         </Field>

@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArticleForm, type ArticleFormValues } from "@/components/articles/ArticleForm";
+import { ArticleForm } from "@/components/articles/ArticleForm";
 import { BackToList, NotFoundArticle } from "@/components/articles/ArticleView";
 import { AccessDenied, PageHeader } from "@/components/ui";
 import { createId } from "@/lib/id";
 import { NOTICE_CATEGORIES } from "@/lib/labels";
+import type { ArticleFormValues } from "@/lib/schemas/article";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { NoticeCategory } from "@/lib/types";
 

@@ -1,4 +1,3 @@
-import { timeToMinutes } from "./date";
 import type { CompanyInfo } from "./types";
 
 export type CompanyKey = keyof CompanyInfo;
@@ -47,11 +46,6 @@ export const COMPANY_SECTIONS: { title: string; fields: CompanyFieldDef[] }[] = 
   },
 ];
 
-const ALL_FIELDS = COMPANY_SECTIONS.flatMap((s) => s.fields);
-
-export type CompanyForm = Record<CompanyKey, string>;
-export type CompanyErrors = Partial<Record<CompanyKey, string>>;
-
 export const EMPTY_COMPANY: CompanyInfo = {
   name: "",
   nameEn: "",
@@ -70,41 +64,5 @@ export const EMPTY_COMPANY: CompanyInfo = {
   defaultAnnualLeave: 15,
 };
 
-export function toCompanyForm(company: CompanyInfo): CompanyForm {
-  return Object.fromEntries(Object.entries(company).map(([k, v]) => [k, String(v)])) as CompanyForm;
-}
-
-export function fromCompanyForm(form: CompanyForm): CompanyInfo {
-  const trimmed = Object.fromEntries(Object.entries(form).map(([k, v]) => [k, v.trim()])) as CompanyForm;
-  return { ...trimmed, defaultAnnualLeave: Number(trimmed.defaultAnnualLeave) };
-}
-
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/**
- * 형식 검증. 사업자번호 중복처럼 다른 회사와 비교해야 하는 검증은
- * isBusinessNumberTaken(lib/platform)으로 호출하는 쪽에서 추가한다.
- */
-export function validateCompany(form: CompanyForm): CompanyErrors {
-  const errors: CompanyErrors = {};
-  for (const field of ALL_FIELDS) {
-    if (field.required && !form[field.key].trim()) errors[field.key] = `${field.label}을(를) 입력하세요.`;
-  }
-  if (form.businessNumber && !/^\d{3}-\d{2}-\d{5}$/.test(form.businessNumber.trim())) {
-    errors.businessNumber = "000-00-00000 형식으로 입력하세요.";
-  }
-  if (form.email && !EMAIL_PATTERN.test(form.email.trim())) {
-    errors.email = "올바른 이메일 형식이 아닙니다.";
-  }
-  if (form.website && !/^https?:\/\/\S+$/.test(form.website.trim())) {
-    errors.website = "http:// 또는 https://로 시작해야 합니다.";
-  }
-  if (form.workStart && form.workEnd && timeToMinutes(form.workStart) >= timeToMinutes(form.workEnd)) {
-    errors.workEnd = "퇴근 시간은 출근 시간보다 늦어야 합니다.";
-  }
-  const leave = Number(form.defaultAnnualLeave);
-  if (form.defaultAnnualLeave && (!Number.isInteger(leave) || leave < 0 || leave > 365)) {
-    errors.defaultAnnualLeave = "0~365 사이의 정수를 입력하세요.";
-  }
-  return errors;
-}

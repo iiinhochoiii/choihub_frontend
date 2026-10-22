@@ -1,9 +1,11 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, FileText, Info, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
 import { ApprovalLine } from "@/components/approval/ApprovalLine";
 import { FieldControl } from "@/components/approval/fieldValue";
 import {
@@ -26,6 +28,7 @@ import {
 } from "@/components/ui";
 import { buildSteps, nextDocNumber } from "@/lib/approval";
 import { createId } from "@/lib/id";
+import { type ApprovalDraftFormValues, createApprovalDraftSchema } from "@/lib/schemas/approval";
 import { useCurrentUser, useData } from "@/lib/store";
 import type { ApprovalDocument, ApprovalForm } from "@/lib/types";
 
@@ -128,28 +131,30 @@ function DraftForm({ form }: { form: ApprovalForm }) {
   const router = useRouter();
   const { data, update } = useData();
   const user = useCurrentUser();
-  const [title, setTitle] = useState("");
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const schema = useMemo(() => createApprovalDraftSchema(form.fields), [form.fields]);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<ApprovalDraftFormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      title: "",
+      values: Object.fromEntries(form.fields.map((f) => [f.id, ""])),
+    },
+  });
 
   const steps = buildSteps(form, user.id);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const next: Record<string, string> = {};
-    if (!title.trim()) next.title = "제목을 입력하세요.";
-    for (const field of form.fields) {
-      if (field.required && !values[field.id]?.trim()) next[field.id] = `${field.label}을(를) 입력하세요.`;
-    }
-    setErrors(next);
-    if (Object.keys(next).length > 0 || steps.length === 0) return;
+  const submit = handleSubmit(({ title, values }) => {
+    if (steps.length === 0) return;
 
     const doc: ApprovalDocument = {
       id: createId("doc"),
       docNumber: nextDocNumber(data.approvalDocs),
       formId: form.id,
       formName: form.name,
-      title: title.trim(),
+      title,
       fields: form.fields,
       values,
       drafterId: user.id,
@@ -159,10 +164,10 @@ function DraftForm({ form }: { form: ApprovalForm }) {
     };
     update((prev) => ({ ...prev, approvalDocs: [doc, ...prev.approvalDocs] }));
     router.push(`/dashboard/approval/${doc.id}`);
-  };
+  });
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+    <form onSubmit={submit} noValidate>
       <Stack $gap={16}>
         <Card>
           <CardHeader>
@@ -187,33 +192,29 @@ function DraftForm({ form }: { form: ApprovalForm }) {
           <SectionTitle>문서 내용</SectionTitle>
           <FormGrid>
             <div data-span="full">
-              <Field label="제목" required error={errors.title}>
+              <Field label="제목" required error={errors.title?.message}>
                 {(id) => (
                   <Input
                     id={id}
-                    value={title}
                     placeholder="결재 문서 제목"
                     aria-invalid={!!errors.title || undefined}
-                    onChange={(e) => setTitle(e.target.value)}
+                    {...register("title")}
                   />
                 )}
               </Field>
             </div>
-            {form.fields.map((field) => (
-              <div key={field.id} data-span={field.type === "textarea" ? "full" : undefined}>
-                <Field label={field.label} required={field.required} error={errors[field.id]}>
-                  {(id) => (
-                    <FieldControl
-                      id={id}
-                      field={field}
-                      value={values[field.id] ?? ""}
-                      invalid={!!errors[field.id]}
-                      onChange={(v) => setValues((prev) => ({ ...prev, [field.id]: v }))}
-                    />
-                  )}
-                </Field>
-              </div>
-            ))}
+            {form.fields.map((field) => {
+              const error = errors.values?.[field.id]?.message;
+              return (
+                <div key={field.id} data-span={field.type === "textarea" ? "full" : undefined}>
+                  <Field label={field.label} required={field.required} error={error}>
+                    {(id) => (
+                      <FieldControl id={id} field={field} invalid={!!error} {...register(`values.${field.id}`)} />
+                    )}
+                  </Field>
+                </div>
+              );
+            })}
           </FormGrid>
         </Card>
 

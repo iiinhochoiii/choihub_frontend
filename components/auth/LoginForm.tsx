@@ -1,14 +1,18 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, LogIn, ShieldCheck, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
 import { LogoMark } from "@/components/common/LogoMark";
 import { Button, Field, Input } from "@/components/ui";
+import { getErrorMessage } from "@/lib/api/authApi";
+import { type LoginFormValues, loginSchema } from "@/lib/schemas/auth";
 import { DEMO_ACCOUNTS } from "@/lib/seed";
-import { useAuth } from "@/lib/store";
+import { useAuth, useLoginMutation } from "@/lib/store";
 import { mq } from "@/styles/theme";
 
 const Wrap = styled.div`
@@ -192,27 +196,28 @@ const OperatorLink = styled(Link)`
 
 export function LoginForm() {
   const router = useRouter();
-  const { ready, user, login } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const { ready, user } = useAuth();
+  const login = useLoginMutation();
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    formState: { errors },
+  } = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: "", password: "" },
+  });
 
   useEffect(() => {
     if (ready && user) router.replace("/dashboard");
   }, [ready, user, router]);
 
-  const submit = (nextEmail: string, nextPassword: string) => {
-    if (!nextEmail.trim() || !nextPassword) {
-      setError("이메일과 비밀번호를 입력해 주세요.");
-      return;
-    }
-    const result = login(nextEmail, nextPassword);
-    if (!result.ok) {
-      setError(result.message);
-      return;
-    }
-    router.replace("/dashboard");
-  };
+  const submit = handleSubmit((values) =>
+    login.mutate(values, { onSuccess: () => router.replace("/dashboard") }),
+  );
+
+  const error = errors.email?.message ?? errors.password?.message ?? (login.error && getErrorMessage(login.error));
+  const disabled = !ready || login.isPending;
 
   return (
     <Wrap>
@@ -241,13 +246,7 @@ export function LoginForm() {
           <Title>로그인</Title>
           <Sub>회사에서 발급받은 계정으로 로그인하세요.</Sub>
 
-          <Form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit(email, password);
-            }}
-            noValidate
-          >
+          <Form onSubmit={submit} noValidate>
             <Field label="이메일">
               {(id) => (
                 <Input
@@ -255,11 +254,8 @@ export function LoginForm() {
                   type="email"
                   autoComplete="username"
                   placeholder="name@company.com"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setError("");
-                  }}
+                  aria-invalid={!!errors.email}
+                  {...register("email", { onChange: () => login.reset() })}
                 />
               )}
             </Field>
@@ -270,16 +266,13 @@ export function LoginForm() {
                   type="password"
                   autoComplete="current-password"
                   placeholder="비밀번호"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setError("");
-                  }}
+                  aria-invalid={!!errors.password}
+                  {...register("password", { onChange: () => login.reset() })}
                 />
               )}
             </Field>
             {error && <ErrorText role="alert">{error}</ErrorText>}
-            <Button type="submit" $size="lg" $block disabled={!ready}>
+            <Button type="submit" $size="lg" $block disabled={disabled}>
               <LogIn />
               로그인
             </Button>
@@ -291,11 +284,11 @@ export function LoginForm() {
               <DemoButton
                 key={account.email}
                 type="button"
-                disabled={!ready}
+                disabled={disabled}
                 onClick={() => {
-                  setEmail(account.email);
-                  setPassword(account.password);
-                  submit(account.email, account.password);
+                  setValue("email", account.email);
+                  setValue("password", account.password);
+                  void submit();
                 }}
               >
                 {account.role === "manager" ? <ShieldCheck /> : <UserRound />}

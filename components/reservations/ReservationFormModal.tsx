@@ -1,10 +1,12 @@
 "use client";
 
 import styled from "@emotion/styled";
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
 import { Button, Field, FormGrid, Input, Modal, Select } from "@/components/ui";
-import { minutesToTime, nowTime, timeToMinutes, todayKey } from "@/lib/date";
+import { minutesToTime, timeToMinutes, todayKey } from "@/lib/date";
 import { createId } from "@/lib/id";
+import { type ReservationFormValues, reservationSchema } from "@/lib/schemas/reservation";
 import { useCurrentUser, useData } from "@/lib/store";
 import { DAY_END, isOverlapping, SLOT_ENDS, SLOT_STARTS } from "./constants";
 
@@ -30,40 +32,37 @@ export function ReservationFormModal({ draft, onClose }: Props) {
   const { data, update } = useData();
   const user = useCurrentUser();
   const activeRooms = data.rooms.filter((room) => room.active);
-  const [roomId, setRoomId] = useState(draft.roomId);
-  const [date, setDate] = useState(draft.date);
-  const [startTime, setStartTime] = useState(draft.startTime);
-  const [endTime, setEndTime] = useState(() =>
-    minutesToTime(Math.min(timeToMinutes(draft.startTime) + 60, DAY_END)),
-  );
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState("");
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors },
+  } = useForm<ReservationFormValues>({
+    resolver: zodResolver(reservationSchema),
+    defaultValues: {
+      roomId: draft.roomId,
+      date: draft.date,
+      startTime: draft.startTime,
+      endTime: minutesToTime(Math.min(timeToMinutes(draft.startTime) + 60, DAY_END)),
+      title: "",
+    },
+  });
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return setError("회의 제목을 입력하세요.");
-    if (!activeRooms.some((room) => room.id === roomId)) {
-      return setError("사용 중지된 회의실은 예약할 수 없습니다. 다른 회의실을 선택하세요.");
+  const submit = handleSubmit(({ title, ...candidate }) => {
+    if (!activeRooms.some((room) => room.id === candidate.roomId)) {
+      return setError("roomId", {
+        message: "사용 중지된 회의실은 예약할 수 없습니다. 다른 회의실을 선택하세요.",
+      });
     }
-    if (!date) return setError("날짜를 선택하세요.");
-    if (endTime <= startTime) return setError("종료 시간은 시작 시간보다 늦어야 합니다.");
-    const today = todayKey();
-    if (date < today || (date === today && startTime < nowTime())) {
-      return setError("지난 시간은 예약할 수 없습니다.");
-    }
-    const candidate = { roomId, date, startTime, endTime };
     if (isOverlapping(data.reservations, candidate)) {
-      return setError("선택한 시간에 이미 예약이 있습니다.");
+      return setError("root", { message: "선택한 시간에 이미 예약이 있습니다." });
     }
     update((prev) => ({
       ...prev,
-      reservations: [
-        ...prev.reservations,
-        { id: createId("r"), ...candidate, title: title.trim(), memberId: user.id },
-      ],
+      reservations: [...prev.reservations, { id: createId("r"), ...candidate, title, memberId: user.id }],
     }));
     onClose();
-  };
+  });
 
   return (
     <Modal
@@ -81,11 +80,11 @@ export function ReservationFormModal({ draft, onClose }: Props) {
         </>
       }
     >
-      <form id="reservation-form" onSubmit={submit}>
+      <form id="reservation-form" onSubmit={submit} noValidate>
         <FormGrid>
-          <Field label="회의실" required>
+          <Field label="회의실" required error={errors.roomId?.message}>
             {(id) => (
-              <Select id={id} value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+              <Select id={id} aria-invalid={!!errors.roomId} {...register("roomId")}>
                 {activeRooms.map((room) => (
                   <option key={room.id} value={room.id}>
                     {room.name} ({room.capacity}인)
@@ -94,14 +93,14 @@ export function ReservationFormModal({ draft, onClose }: Props) {
               </Select>
             )}
           </Field>
-          <Field label="날짜" required>
+          <Field label="날짜" required error={errors.date?.message}>
             {(id) => (
-              <Input id={id} type="date" value={date} min={todayKey()} onChange={(e) => setDate(e.target.value)} />
+              <Input id={id} type="date" min={todayKey()} aria-invalid={!!errors.date} {...register("date")} />
             )}
           </Field>
-          <Field label="시작" required>
+          <Field label="시작" required error={errors.startTime?.message}>
             {(id) => (
-              <Select id={id} value={startTime} onChange={(e) => setStartTime(e.target.value)}>
+              <Select id={id} aria-invalid={!!errors.startTime} {...register("startTime")}>
                 {SLOT_STARTS.map((t) => (
                   <option key={t} value={t}>
                     {t}
@@ -110,9 +109,9 @@ export function ReservationFormModal({ draft, onClose }: Props) {
               </Select>
             )}
           </Field>
-          <Field label="종료" required>
+          <Field label="종료" required error={errors.endTime?.message}>
             {(id) => (
-              <Select id={id} value={endTime} onChange={(e) => setEndTime(e.target.value)}>
+              <Select id={id} aria-invalid={!!errors.endTime} {...register("endTime")}>
                 {SLOT_ENDS.map((t) => (
                   <option key={t} value={t}>
                     {t}
@@ -122,20 +121,20 @@ export function ReservationFormModal({ draft, onClose }: Props) {
             )}
           </Field>
           <div data-span="full">
-            <Field label="회의 제목" required>
+            <Field label="회의 제목" required error={errors.title?.message}>
               {(id) => (
                 <Input
                   id={id}
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
                   placeholder="예: 주간 회의"
                   autoFocus
+                  aria-invalid={!!errors.title}
+                  {...register("title")}
                 />
               )}
             </Field>
           </div>
         </FormGrid>
-        {error && <ErrorText role="alert">{error}</ErrorText>}
+        {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
       </form>
     </Modal>
   );

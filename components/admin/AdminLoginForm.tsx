@@ -1,14 +1,18 @@
 "use client";
 
 import styled from "@emotion/styled";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
 import { LogoMark } from "@/components/common/LogoMark";
 import { Button, Field, Input } from "@/components/ui";
+import { getErrorMessage } from "@/lib/api/authApi";
 import { DEMO_OPERATOR } from "@/lib/platform";
-import { useOperatorAuth } from "@/lib/store";
+import { type LoginFormValues, loginSchema } from "@/lib/schemas/auth";
+import { useOperatorAuth, useOperatorLoginMutation } from "@/lib/store";
 
 const Screen = styled.main`
   display: flex;
@@ -85,20 +89,26 @@ const Footer = styled.div`
 
 export function AdminLoginForm() {
   const router = useRouter();
-  const { ready, operator, login } = useOperatorAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const { ready, operator } = useOperatorAuth();
+  const login = useOperatorLoginMutation();
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    formState: { errors },
+  } = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: "", password: "" },
+  });
 
   useEffect(() => {
     if (ready && operator) router.replace("/admin");
   }, [ready, operator, router]);
 
-  const submit = (nextEmail: string, nextPassword: string) => {
-    const result = login(nextEmail, nextPassword);
-    if (!result.ok) return setError(result.message);
-    router.replace("/admin");
-  };
+  const submit = handleSubmit((values) => login.mutate(values, { onSuccess: () => router.replace("/admin") }));
+
+  const error = errors.email?.message ?? errors.password?.message ?? (login.error && getErrorMessage(login.error));
+  const disabled = !ready || login.isPending;
 
   return (
     <Screen>
@@ -107,24 +117,15 @@ export function AdminLoginForm() {
           <LogoMark size={30} />
           ChoiHub <small>운영 콘솔</small>
         </Brand>
-        <Form
-          noValidate
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit(email, password);
-          }}
-        >
+        <Form onSubmit={submit} noValidate>
           <Field label="운영자 이메일">
             {(id) => (
               <Input
                 id={id}
                 type="email"
                 autoComplete="username"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setError("");
-                }}
+                aria-invalid={!!errors.email}
+                {...register("email", { onChange: () => login.reset() })}
               />
             )}
           </Field>
@@ -134,26 +135,23 @@ export function AdminLoginForm() {
                 id={id}
                 type="password"
                 autoComplete="current-password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setError("");
-                }}
+                aria-invalid={!!errors.password}
+                {...register("password", { onChange: () => login.reset() })}
               />
             )}
           </Field>
           {error && <ErrorText role="status">{error}</ErrorText>}
-          <Button type="submit" $size="lg" $block disabled={!ready}>
+          <Button type="submit" $size="lg" $block disabled={disabled}>
             로그인
           </Button>
           <Button
             $variant="secondary"
             $block
-            disabled={!ready}
+            disabled={disabled}
             onClick={() => {
-              setEmail(DEMO_OPERATOR.email);
-              setPassword(DEMO_OPERATOR.password);
-              submit(DEMO_OPERATOR.email, DEMO_OPERATOR.password);
+              setValue("email", DEMO_OPERATOR.email);
+              setValue("password", DEMO_OPERATOR.password);
+              void submit();
             }}
           >
             <ShieldCheck />

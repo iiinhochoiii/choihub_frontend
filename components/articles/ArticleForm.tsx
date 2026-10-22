@@ -1,7 +1,9 @@
 "use client";
 
 import styled from "@emotion/styled";
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMemo } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import {
   ButtonLink,
   Button,
@@ -14,13 +16,7 @@ import {
   Stack,
   Textarea,
 } from "@/components/ui";
-
-export interface ArticleFormValues<C extends string> {
-  title: string;
-  category: C;
-  content: string;
-  pinned: boolean;
-}
+import { type ArticleFormValues, createArticleSchema, TITLE_MAX } from "@/lib/schemas/article";
 
 interface ArticleFormProps<C extends string> {
   initial: ArticleFormValues<C>;
@@ -31,8 +27,6 @@ interface ArticleFormProps<C extends string> {
   cancelHref: string;
   onSubmit: (values: ArticleFormValues<C>) => void;
 }
-
-const TITLE_MAX = 100;
 
 const ContentArea = styled(Textarea)`
   min-height: 320px;
@@ -55,36 +49,30 @@ export function ArticleForm<C extends string>({
   cancelHref,
   onSubmit,
 }: ArticleFormProps<C>) {
-  const [values, setValues] = useState(initial);
-  const [submitted, setSubmitted] = useState(false);
+  const schema = useMemo(() => createArticleSchema(categories.map((c) => c.value)), [categories]);
+  const {
+    register,
+    control,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<ArticleFormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: initial,
+  });
+  const title = useWatch({ control, name: "title" });
 
-  const titleError = !values.title.trim()
-    ? "제목을 입력하세요."
-    : values.title.length > TITLE_MAX
-      ? `제목은 ${TITLE_MAX}자 이내로 입력하세요.`
-      : undefined;
-  const contentError = !values.content.trim() ? "내용을 입력하세요." : undefined;
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitted(true);
-    if (titleError || contentError) return;
-    onSubmit({ ...values, title: values.title.trim(), content: values.content.trim() });
-  };
+  // 분류는 스키마가 categories로 검사하므로 C로 좁혀도 안전하다.
+  const submit = handleSubmit((values) => onSubmit(values as ArticleFormValues<C>));
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+    <form onSubmit={submit} noValidate>
       <Card>
         <Stack $gap={18}>
           <Row $gap={16} style={{ alignItems: "flex-start" }}>
             <CategoryField>
               <Field label="분류" required>
                 {(id) => (
-                  <Select
-                    id={id}
-                    value={values.category}
-                    onChange={(e) => setValues((v) => ({ ...v, category: e.target.value as C }))}
-                  >
+                  <Select id={id} {...register("category")}>
                     {categories.map((c) => (
                       <option key={c.value} value={c.value}>
                         {c.label}
@@ -95,20 +83,9 @@ export function ArticleForm<C extends string>({
               </Field>
             </CategoryField>
             <div style={{ flex: 1, minWidth: 220 }}>
-              <Field
-                label="제목"
-                required
-                error={submitted ? titleError : undefined}
-                hint={`${values.title.length}/${TITLE_MAX}`}
-              >
+              <Field label="제목" required error={errors.title?.message} hint={`${title.length}/${TITLE_MAX}`}>
                 {(id) => (
-                  <Input
-                    id={id}
-                    value={values.title}
-                    placeholder="제목을 입력하세요"
-                    aria-invalid={submitted && !!titleError}
-                    onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
-                  />
+                  <Input id={id} placeholder="제목을 입력하세요" aria-invalid={!!errors.title} {...register("title")} />
                 )}
               </Field>
             </div>
@@ -116,23 +93,18 @@ export function ArticleForm<C extends string>({
 
           {showPinned && (
             <CheckboxLabel>
-              <input
-                type="checkbox"
-                checked={values.pinned}
-                onChange={(e) => setValues((v) => ({ ...v, pinned: e.target.checked }))}
-              />
+              <input type="checkbox" {...register("pinned")} />
               목록 상단에 고정
             </CheckboxLabel>
           )}
 
-          <Field label="내용" required error={submitted ? contentError : undefined}>
+          <Field label="내용" required error={errors.content?.message}>
             {(id) => (
               <ContentArea
                 id={id}
-                value={values.content}
                 placeholder="내용을 입력하세요"
-                aria-invalid={submitted && !!contentError}
-                onChange={(e) => setValues((v) => ({ ...v, content: e.target.value }))}
+                aria-invalid={!!errors.content}
+                {...register("content")}
               />
             )}
           </Field>
