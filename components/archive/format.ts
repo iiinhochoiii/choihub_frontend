@@ -1,4 +1,4 @@
-/** 데모 저장 한도: 이 크기 이하만 파일 내용을 dataURL로 보관한다. */
+/** 서버 보관 한도: 이 크기 이하만 파일 내용을 저장한다(초과하면 정보만 등록). 서버 규칙과 같은 값 */
 export const MAX_STORED_FILE_SIZE = 1024 * 1024;
 
 /** bytes → "1.2 MB" */
@@ -17,13 +17,4 @@ export function formatFileSize(bytes: number): string {
 export function getExtension(name: string): string {
   const index = name.lastIndexOf(".");
   return index === -1 ? "" : name.slice(index + 1).toLowerCase();
-}
-
-export function readAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
 }

@@ -2,7 +2,7 @@
 
 import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Ban, KeyRound, Pencil, Play, UserPlus } from "lucide-react";
+import { AlertCircle, ArrowLeft, Ban, KeyRound, Pencil, Play, UserPlus } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { CredentialCard } from "@/components/common/CredentialCard";
@@ -15,7 +15,9 @@ import {
   CardTitle,
   ConfirmModal,
   EmptyState,
+  ErrorState,
   IconButton,
+  LoadingState,
   Modal,
   MutedCell,
   Notice,
@@ -25,9 +27,9 @@ import {
   Table,
   TableWrap,
 } from "@/components/ui";
+import { ApiError, getErrorMessage } from "@/apis/defaultInstance";
 import { formatDate } from "@/lib/date";
-import { createId } from "@/lib/id";
-import { generatePassword, isBusinessNumberTaken, isEmailTaken, pickAvatarColor } from "@/lib/platform";
+import { setServerErrors } from "@/lib/form";
 import {
   type CompanyFormInput,
   type CompanyFormValues,
@@ -37,8 +39,15 @@ import {
   managerSchema,
   toCompanyFormInput,
 } from "@/lib/schemas/company";
-import { usePlatform } from "@/lib/store";
-import type { GroupwareData, Member, Tenant } from "@/lib/types";
+import {
+  useActivateTenant,
+  useAddManager,
+  useResetManagerPassword,
+  useSuspendTenant,
+  useTenant,
+  useUpdateTenantCompany,
+} from "@/queries/admin";
+import type { Member } from "@/types";
 import { mq } from "@/styles/theme";
 import { CompanyFields } from "./CompanyFields";
 import { ManagerFields } from "./ManagerFields";
@@ -74,14 +83,21 @@ const Summary = styled.div`
 type Credential = { title: string; name: string; email: string; password: string };
 
 export function CompanyDetail({ tenantId }: { tenantId: string }) {
-  const { platform, updatePlatform } = usePlatform();
-  const tenant = platform.tenants.find((t) => t.id === tenantId);
+  const { data: tenant, isPending, error, refetch } = useTenant(tenantId);
+  const updateCompany = useUpdateTenantCompany();
+  const suspendTenant = useSuspendTenant();
+  const activateTenant = useActivateTenant();
+  const addManagerMutation = useAddManager();
+  const resetPasswordMutation = useResetManagerPassword();
 
   const [editing, setEditing] = useState(false);
   const [statusConfirm, setStatusConfirm] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState<Member | null>(null);
   const [credential, setCredential] = useState<Credential | null>(null);
+  /** 폼이 없는 동작(정지·재개, 비밀번호 초기화)과 폼 필드에 붙지 않는 저장 오류 */
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
   const companyForm = useForm<CompanyFormInput, unknown, CompanyFormValues>({
     resolver: zodResolver(companySchema),
   });
@@ -90,78 +106,81 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
     defaultValues: EMPTY_MANAGER,
   });
 
-  if (!tenant) {
-    return (
-      <EmptyState
-        title="회사를 찾을 수 없습니다"
-        action={
-          <ButtonLink href="/admin" $variant="secondary">
-            목록으로
-          </ButtonLink>
-        }
-      />
-    );
+  if (isPending) return <LoadingState />;
+
+  if (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return (
+        <EmptyState
+          title="회사를 찾을 수 없습니다"
+          action={
+            <ButtonLink href="/admin" $variant="secondary">
+              목록으로
+            </ButtonLink>
+          }
+        />
+      );
+    }
+    return <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />;
   }
 
-  const { company } = tenant.data;
-  const managers = tenant.data.members.filter((m) => m.role === "manager");
+  const { company, managers, stats } = tenant;
   const suspended = tenant.status === "suspended";
-
-  const updateTenant = (updater: (t: Tenant) => Tenant) =>
-    updatePlatform((prev) => ({
-      ...prev,
-      tenants: prev.tenants.map((t) => (t.id === tenantId ? updater(t) : t)),
-    }));
-  const updateData = (updater: (d: GroupwareData) => GroupwareData) =>
-    updateTenant((t) => ({ ...t, data: updater(t.data) }));
+  const statusPending = suspendTenant.isPending || activateTenant.isPending;
 
   const startEdit = () => {
     companyForm.reset(toCompanyFormInput(company));
+    setActionError(null);
     setEditing(true);
   };
 
   const saveCompany = companyForm.handleSubmit((values) => {
-    if (isBusinessNumberTaken(platform, values.businessNumber, tenantId)) {
-      return companyForm.setError("businessNumber", { message: "이미 등록된 사업자등록번호입니다." });
-    }
-    updateData((d) => ({ ...d, company: values }));
-    setEditing(false);
+    setActionError(null);
+    // 사업자번호 중복은 서버가 검사한다.
+    updateCompany.mutate(
+      { id: tenantId, body: values },
+      {
+        onSuccess: () => setEditing(false),
+        onError: (err) => {
+          if (!setServerErrors(err, companyForm.setError)) setActionError(getErrorMessage(err));
+        },
+      },
+    );
   });
 
+  const changeStatus = () => {
+    setActionError(null);
+    const mutation = suspended ? activateTenant : suspendTenant;
+    mutation.mutate(tenantId, { onError: (err) => setActionError(getErrorMessage(err)) });
+  };
+
   const addManager = managerForm.handleSubmit((values) => {
-    if (isEmailTaken(platform, values.email)) {
-      return managerForm.setError("email", { message: "이미 ChoiHub에서 사용 중인 이메일입니다." });
-    }
-    const password = generatePassword();
-    const member: Member = {
-      id: createId("m"),
-      name: values.name,
-      email: values.email,
-      password,
-      role: "manager",
-      departmentId: tenant.data.departments[0]?.id ?? "",
-      position: values.position || "매니저",
-      phone: values.phone,
-      extension: "",
-      joinedAt: new Date().toISOString().slice(0, 10),
-      birthday: "",
-      status: "active",
-      annualLeaveTotal: company.defaultAnnualLeave,
-      color: pickAvatarColor(tenant.data.members.length),
-      mustChangePassword: true,
-    };
-    updateData((d) => ({ ...d, members: [...d.members, member] }));
-    setAddOpen(false);
-    setCredential({ title: "매니저 계정 발급 완료", name: member.name, email: member.email, password });
+    setAddError(null);
+    // 이메일 중복 검사, 기본 부서·연차 지정, 초기 비밀번호 생성은 서버가 한다.
+    addManagerMutation.mutate(
+      { id: tenantId, body: { ...values, position: values.position || undefined } },
+      {
+        onSuccess: ({ member, credential: issued }) => {
+          setAddOpen(false);
+          setCredential({ title: "매니저 계정 발급 완료", name: member.name, ...issued });
+        },
+        onError: (err) => {
+          if (!setServerErrors(err, managerForm.setError)) setAddError(getErrorMessage(err));
+        },
+      },
+    );
   });
 
   const resetPassword = (target: Member) => {
-    const password = generatePassword();
-    updateData((d) => ({
-      ...d,
-      members: d.members.map((m) => (m.id === target.id ? { ...m, password, mustChangePassword: true } : m)),
-    }));
-    setCredential({ title: "비밀번호 초기화 완료", name: target.name, email: target.email, password });
+    setActionError(null);
+    resetPasswordMutation.mutate(
+      { id: tenantId, memberId: target.id },
+      {
+        onSuccess: ({ credential: issued }) =>
+          setCredential({ title: "비밀번호 초기화 완료", name: target.name, ...issued }),
+        onError: (err) => setActionError(getErrorMessage(err)),
+      },
+    );
   };
 
   return (
@@ -175,13 +194,24 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
               <ArrowLeft />
               목록
             </ButtonLink>
-            <Button $variant={suspended ? "primary" : "danger"} onClick={() => setStatusConfirm(true)}>
+            <Button
+              $variant={suspended ? "primary" : "danger"}
+              disabled={statusPending}
+              onClick={() => setStatusConfirm(true)}
+            >
               {suspended ? <Play /> : <Ban />}
               {suspended ? "이용 재개" : "이용 정지"}
             </Button>
           </>
         }
       />
+
+      {actionError && (
+        <Notice $tone="warning">
+          <AlertCircle />
+          <span>{actionError}</span>
+        </Notice>
+      )}
 
       {suspended && (
         <Notice $tone="warning">
@@ -199,15 +229,15 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
             </div>
             <div>
               <small>구성원</small>
-              <strong>{tenant.data.members.length}명</strong>
+              <strong>{stats.members}명</strong>
             </div>
             <div>
               <small>매니저</small>
-              <strong>{managers.length}명</strong>
+              <strong>{stats.managers}명</strong>
             </div>
             <div>
               <small>부서</small>
-              <strong>{tenant.data.departments.length}개</strong>
+              <strong>{stats.departments}개</strong>
             </div>
           </Summary>
         </Card>
@@ -219,6 +249,7 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
               $size="sm"
               onClick={() => {
                 managerForm.reset(EMPTY_MANAGER);
+                setAddError(null);
                 setAddOpen(true);
               }}
             >
@@ -253,7 +284,12 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
                       )}
                     </td>
                     <td>
-                      <IconButton aria-label={`${m.name} 비밀번호 초기화`} title="비밀번호 초기화" onClick={() => setResetTarget(m)}>
+                      <IconButton
+                        aria-label={`${m.name} 비밀번호 초기화`}
+                        title="비밀번호 초기화"
+                        disabled={resetPasswordMutation.isPending}
+                        onClick={() => setResetTarget(m)}
+                      >
                         <KeyRound />
                       </IconButton>
                     </td>
@@ -276,7 +312,7 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
                   <Button $variant="secondary" $size="sm" onClick={() => setEditing(false)}>
                     취소
                   </Button>
-                  <Button type="submit" $size="sm">
+                  <Button type="submit" $size="sm" disabled={updateCompany.isPending}>
                     저장
                   </Button>
                 </span>
@@ -308,7 +344,7 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
         confirmLabel={suspended ? "재개" : "정지"}
         danger={!suspended}
         onClose={() => setStatusConfirm(false)}
-        onConfirm={() => updateTenant((t) => ({ ...t, status: suspended ? "active" : "suspended" }))}
+        onConfirm={changeStatus}
       />
 
       <Modal
@@ -321,10 +357,18 @@ export function CompanyDetail({ tenantId }: { tenantId: string }) {
             <Button $variant="secondary" onClick={() => setAddOpen(false)}>
               취소
             </Button>
-            <Button onClick={addManager}>발급</Button>
+            <Button onClick={addManager} disabled={addManagerMutation.isPending}>
+              발급
+            </Button>
           </>
         }
       >
+        {addError && (
+          <Notice $tone="warning">
+            <AlertCircle />
+            <span>{addError}</span>
+          </Notice>
+        )}
         <ManagerFields register={managerForm.register} errors={managerForm.formState.errors} />
       </Modal>
 

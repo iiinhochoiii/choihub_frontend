@@ -4,9 +4,9 @@ import styled from "@emotion/styled";
 import { MapPin, Users } from "lucide-react";
 import { transientOptions } from "@/components/ui";
 import { nowTime, todayKey } from "@/lib/date";
-import { getMemberName } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { Reservation } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import type { Reservation, Room } from "@/types";
 import { DAY_END, DAY_START, SLOT_MINUTES, SLOT_STARTS, SLOT_WIDTH, slotIndex } from "./constants";
 
 const ROOM_COL = 180;
@@ -147,12 +147,16 @@ const Block = styled("button", transientOptions)<{ $start: number; $end: number;
 
 interface Props {
   date: string;
+  /** 표시 순서대로 정렬된 회의실 */
+  rooms: Room[];
+  /** 해당 날짜의 전체 예약 */
+  reservations: Reservation[];
   onSlotClick: (roomId: string, startTime: string) => void;
   onReservationClick: (reservation: Reservation) => void;
 }
 
-export function Timeline({ date, onSlotClick, onReservationClick }: Props) {
-  const { data } = useData();
+export function Timeline({ date, rooms, reservations: dayReservations, onSlotClick, onReservationClick }: Props) {
+  const { getMemberName } = useDirectory();
   const user = useCurrentUser();
   const today = todayKey();
   const current = nowTime();
@@ -167,8 +171,9 @@ export function Timeline({ date, onSlotClick, onReservationClick }: Props) {
           <HourLabel key={time}>{time}</HourLabel>
         ))}
 
-        {data.rooms.map((room) => {
-          const reservations = data.reservations.filter((r) => r.roomId === room.id && r.date === date);
+        {rooms.map((room) => {
+          // 날짜를 바꾸는 중에는 이전 날짜 목록이 잠시 남아 있을 수 있어 날짜도 함께 확인한다.
+          const reservations = dayReservations.filter((r) => r.roomId === room.id && r.date === date);
           return (
             <div key={room.id} style={{ display: "contents" }}>
               <RoomCell>
@@ -215,7 +220,7 @@ export function Timeline({ date, onSlotClick, onReservationClick }: Props) {
                     >
                       <strong>{r.title}</strong>
                       <span>
-                        {r.startTime}~{r.endTime} · {getMemberName(data, r.memberId)}
+                        {r.startTime}~{r.endTime} · {getMemberName(r.memberId)}
                       </span>
                     </Block>
                   );

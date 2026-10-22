@@ -4,13 +4,16 @@ import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { MessageCircle, Trash2 } from "lucide-react";
 import { useForm, useWatch } from "react-hook-form";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { Avatar, Button, Card, IconButton, Textarea } from "@/components/ui";
 import { formatRelative } from "@/lib/date";
-import { createId } from "@/lib/id";
+import { setServerErrors } from "@/lib/form";
 import { COMMENT_MAX, type CommentFormValues, commentSchema } from "@/lib/schemas/comment";
-import { getMember } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { Post } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import { useAddComment, useDeleteComment } from "@/queries/posts";
+import type { Post } from "@/types";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
 
 const Title = styled.h2`
   display: flex;
@@ -103,28 +106,41 @@ const Composer = styled.form`
   }
 `;
 
+const ErrorText = styled.p`
+  margin-top: 8px;
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
+
 export function CommentSection({ post }: { post: Post }) {
-  const { data, update } = useData();
+  const { getMember } = useDirectory();
   const user = useCurrentUser();
-  const { register, control, handleSubmit, reset } = useForm<CommentFormValues>({
+  const addComment = useAddComment();
+  const deleteComment = useDeleteComment();
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors },
+  } = useForm<CommentFormValues>({
     resolver: zodResolver(commentSchema),
     defaultValues: { content: "" },
   });
   const content = useWatch({ control, name: "content" });
 
-  const updateComments = (fn: (comments: Post["comments"]) => Post["comments"]) =>
-    update((prev) => ({
-      ...prev,
-      posts: prev.posts.map((p) => (p.id === post.id ? { ...p, comments: fn(p.comments) } : p)),
-    }));
-
-  const submit = handleSubmit(({ content: text }) => {
-    updateComments((comments) => [
-      ...comments,
-      { id: createId("c"), authorId: user.id, content: text, createdAt: new Date().toISOString() },
-    ]);
-    reset();
-  });
+  const submit = handleSubmit(({ content: text }) =>
+    addComment.mutate(
+      { postId: post.id, content: text },
+      {
+        onSuccess: () => reset(),
+        onError: (error) => {
+          if (!setServerErrors(error, setError)) setError("content", { message: getErrorMessage(error) });
+        },
+      },
+    ),
+  );
 
   return (
     <Card $padding={24} style={{ marginTop: 16 }}>
@@ -138,13 +154,13 @@ export function CommentSection({ post }: { post: Post }) {
       ) : (
         <List>
           {post.comments.map((comment) => {
-            const author = getMember(data, comment.authorId);
+            const author = getMember(comment.authorId);
             return (
               <Item key={comment.id}>
                 <Avatar name={author?.name ?? "?"} color={author?.color} size={32} />
                 <ItemBody>
                   <header>
-                    <strong>{author?.name ?? "알 수 없음"}</strong>
+                    <strong>{author?.name ?? UNKNOWN_MEMBER_NAME}</strong>
                     {author && <small>{author.position}</small>}
                     <small>· {formatRelative(comment.createdAt)}</small>
                   </header>
@@ -154,7 +170,8 @@ export function CommentSection({ post }: { post: Post }) {
                   <IconButton
                     $size={30}
                     aria-label="댓글 삭제"
-                    onClick={() => updateComments((comments) => comments.filter((c) => c.id !== comment.id))}
+                    disabled={deleteComment.isPending}
+                    onClick={() => deleteComment.mutate({ postId: post.id, commentId: comment.id })}
                   >
                     <Trash2 />
                   </IconButton>
@@ -164,19 +181,22 @@ export function CommentSection({ post }: { post: Post }) {
           })}
         </List>
       )}
+      {deleteComment.error && <ErrorText role="alert">{getErrorMessage(deleteComment.error)}</ErrorText>}
 
       <Composer onSubmit={submit}>
         <Textarea
           aria-label="댓글 입력"
           placeholder="댓글을 입력하세요"
           maxLength={COMMENT_MAX}
+          aria-invalid={!!errors.content}
           {...register("content")}
         />
+        {errors.content && <ErrorText role="alert">{errors.content.message}</ErrorText>}
         <div>
           <span>
             {content.length}/{COMMENT_MAX}
           </span>
-          <Button type="submit" $size="sm" disabled={!content.trim()}>
+          <Button type="submit" $size="sm" disabled={!content.trim() || addComment.isPending}>
             댓글 등록
           </Button>
         </div>

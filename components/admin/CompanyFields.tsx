@@ -4,7 +4,7 @@ import styled from "@emotion/styled";
 import type { FieldError, UseFormRegisterReturn } from "react-hook-form";
 import { Card, CardHeader, CardTitle, Field, FormGrid, Input } from "@/components/ui";
 import { COMPANY_SECTIONS, type CompanyKey } from "@/lib/company";
-import type { CompanyInfo } from "@/lib/types";
+import type { CompanyInfo } from "@/types";
 
 const ReadValue = styled.p`
   min-height: 38px;

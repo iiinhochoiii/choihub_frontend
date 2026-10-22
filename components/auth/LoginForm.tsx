@@ -9,10 +9,9 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { LogoMark } from "@/components/common/LogoMark";
 import { Button, Field, Input } from "@/components/ui";
-import { getErrorMessage } from "@/lib/api/authApi";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { type LoginFormValues, loginSchema } from "@/lib/schemas/auth";
-import { DEMO_ACCOUNTS } from "@/lib/seed";
-import { useAuth, useLoginMutation } from "@/lib/store";
+import { useAuth, useLoginMutation } from "@/queries/auth";
 import { mq } from "@/styles/theme";
 
 const Wrap = styled.div`
@@ -175,12 +174,6 @@ const DemoButton = styled.button`
   }
 `;
 
-const DemoHint = styled.p`
-  margin-top: 12px;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.textSubtle};
-`;
-
 const OperatorLink = styled(Link)`
   display: block;
   margin-top: 24px;
@@ -193,6 +186,13 @@ const OperatorLink = styled(Link)`
     color: ${({ theme }) => theme.colors.primary};
   }
 `;
+
+/** 백엔드 시드(npm run seed)로 만들어지는 데모 계정 */
+const DEMO_ACCOUNTS = [
+  { role: "manager", buttonLabel: "매니저로 로그인", description: "매니저 · 경영지원본부", email: "admin@testcompany.example" },
+  { role: "employee", buttonLabel: "직원으로 로그인", description: "방문자 · 프론트엔드팀", email: "user@testcompany.example" },
+] as const;
+const DEMO_PASSWORD = "password";
 
 export function LoginForm() {
   const router = useRouter();
@@ -287,7 +287,7 @@ export function LoginForm() {
                 disabled={disabled}
                 onClick={() => {
                   setValue("email", account.email);
-                  setValue("password", account.password);
+                  setValue("password", DEMO_PASSWORD);
                   void submit();
                 }}
               >
@@ -297,9 +297,6 @@ export function LoginForm() {
               </DemoButton>
             ))}
           </DemoList>
-          <DemoHint>
-            데모 데이터는 브라우저(localStorage)에만 저장됩니다. 비밀번호는 모두 &quot;password&quot;입니다.
-          </DemoHint>
           <OperatorLink href="/admin/login">ChoiHub 운영자이신가요? 운영 콘솔 로그인 →</OperatorLink>
         </Panel>
       </Main>

@@ -1,8 +1,8 @@
 "use client";
 
 import styled from "@emotion/styled";
-import { Inbox, Lock } from "lucide-react";
-import { transientOptions } from "./Button";
+import { CircleAlert, Inbox, Lock } from "lucide-react";
+import { Button, transientOptions } from "./Button";
 
 const HeaderWrap = styled.header`
   display: flex;
@@ -129,6 +129,46 @@ export function AccessDenied({ message }: { message?: string }) {
       <Lock />
       <strong>접근 권한이 없습니다</strong>
       <p>{message ?? "이 메뉴는 매니저 권한이 있는 사용자만 이용할 수 있습니다."}</p>
+    </EmptyWrap>
+  );
+}
+
+const Spinner = styled.span`
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 3px solid ${({ theme }) => theme.colors.border};
+  border-top-color: ${({ theme }) => theme.colors.primary};
+  animation: ui-spin 0.8s linear infinite;
+
+  @keyframes ui-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+`;
+
+/** 서버 데이터를 불러오는 중 */
+export function LoadingState({ label = "불러오는 중" }: { label?: string }) {
+  return (
+    <EmptyWrap role="status" aria-label={label}>
+      <Spinner />
+    </EmptyWrap>
+  );
+}
+
+/** 서버 데이터를 불러오지 못했을 때. onRetry가 있으면 다시 시도 버튼을 보여 준다. */
+export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <EmptyWrap role="alert">
+      <CircleAlert />
+      <strong>불러오지 못했습니다</strong>
+      <p>{message}</p>
+      {onRetry && (
+        <Button $variant="secondary" $size="sm" onClick={onRetry}>
+          다시 시도
+        </Button>
+      )}
     </EmptyWrap>
   );
 }

@@ -1,18 +1,18 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Info } from "lucide-react";
+import { AlertCircle, Info } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { CredentialCard } from "@/components/common/CredentialCard";
 import { Button, Field, FormGrid, Input, Modal, Notice, Select } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { todayKey } from "@/lib/date";
-import { createId } from "@/lib/id";
+import { setServerErrors } from "@/lib/form";
 import { MEMBER_STATUS, ROLE_LABELS } from "@/lib/labels";
-import { generatePassword, isEmailTaken, pickAvatarColor } from "@/lib/platform";
 import { type MemberFormInput, type MemberFormValues, memberSchema } from "@/lib/schemas/member";
-import { useData, usePlatform } from "@/lib/store";
-import type { Member, MemberStatus, Role } from "@/lib/types";
+import { useCompany, useCreateMember, useDepartments, useUpdateMember } from "@/queries/directory";
+import type { Credential, Member, MemberStatus, Role } from "@/types";
 import { flattenDepartments } from "./OrgTree";
 
 interface Props {
@@ -25,12 +25,15 @@ interface Props {
 }
 
 export function MemberFormModal({ member, currentUserId, defaultDepartmentId, onClose, onSaved }: Props) {
-  const { data, update } = useData();
-  const { platform } = usePlatform();
-  const [issued, setIssued] = useState<Member | null>(null);
+  const company = useCompany();
+  const departments = flattenDepartments(useDepartments());
+  const createMember = useCreateMember();
+  const updateMember = useUpdateMember();
+  const [issued, setIssued] = useState<{ member: Member; credential: Credential } | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const isNew = member === null;
   const isSelf = member?.id === currentUserId;
-  const departments = flattenDepartments(data);
+  const pending = createMember.isPending || updateMember.isPending;
 
   const {
     register,
@@ -50,47 +53,22 @@ export function MemberFormModal({ member, currentUserId, defaultDepartmentId, on
       joinedAt: member?.joinedAt ?? todayKey(),
       birthday: member?.birthday ?? "",
       status: member?.status ?? "active",
-      annualLeaveTotal: member?.annualLeaveTotal ?? data.company.defaultAnnualLeave,
+      annualLeaveTotal: member?.annualLeaveTotal ?? company.defaultAnnualLeave,
     },
   });
 
   const submit = handleSubmit((values) => {
-    // 로그인 ID 중복과 매니저 권한 해제 제한은 앱 데이터와 비교해 검사한다.
-    let valid = true;
-    if (isEmailTaken(platform, values.email.toLowerCase(), member?.id)) {
-      setError("email", { message: "이미 ChoiHub에서 사용 중인 이메일입니다. (로그인 ID는 전체 회사에서 유일해야 합니다)" });
-      valid = false;
+    setSubmitError(null);
+    // 로그인 ID 중복, 매니저 권한 해제 제한, 초기 비밀번호 발급은 서버가 처리한다.
+    const onError = (error: unknown) => {
+      if (!setServerErrors(error, setError)) setSubmitError(getErrorMessage(error));
+    };
+    if (member) {
+      updateMember.mutate({ id: member.id, body: values }, { onSuccess: onSaved, onError });
+    } else {
+      // 신규 계정은 초기 비밀번호를 한 번 보여준 뒤 닫는다.
+      createMember.mutate(values, { onSuccess: setIssued, onError });
     }
-    if (member?.role === "manager" && values.role === "employee") {
-      if (isSelf) {
-        setError("role", { message: "본인의 매니저 권한은 해제할 수 없습니다." });
-        valid = false;
-      } else if (data.members.filter((m) => m.role === "manager").length <= 1) {
-        setError("role", { message: "마지막 매니저의 권한은 해제할 수 없습니다." });
-        valid = false;
-      }
-    }
-    if (!valid) return;
-
-    const saved: Member = member
-      ? { ...member, ...values }
-      : {
-          ...values,
-          id: createId("m"),
-          password: generatePassword(),
-          mustChangePassword: true,
-          color: pickAvatarColor(data.members.length),
-        };
-
-    update((prev) => ({
-      ...prev,
-      members: member
-        ? prev.members.map((m) => (m.id === member.id ? saved : m))
-        : [...prev.members, saved],
-    }));
-    // 신규 계정은 초기 비밀번호를 한 번 보여준 뒤 닫는다.
-    if (member) onSaved(saved);
-    else setIssued(saved);
   });
 
   if (issued) {
@@ -98,13 +76,13 @@ export function MemberFormModal({ member, currentUserId, defaultDepartmentId, on
       <Modal
         open
         title="구성원 계정 발급 완료"
-        onClose={() => onSaved(issued)}
-        footer={<Button onClick={() => onSaved(issued)}>확인</Button>}
+        onClose={() => onSaved(issued.member)}
+        footer={<Button onClick={() => onSaved(issued.member)}>확인</Button>}
       >
         <p style={{ marginBottom: 16 }}>
-          <strong>{issued.name}</strong>님의 계정을 만들었습니다. 아래 로그인 정보를 본인에게 전달하세요.
+          <strong>{issued.member.name}</strong>님의 계정을 만들었습니다. 아래 로그인 정보를 본인에게 전달하세요.
         </p>
-        <CredentialCard email={issued.email} password={issued.password} />
+        <CredentialCard email={issued.credential.email} password={issued.credential.password} />
       </Modal>
     );
   }
@@ -120,7 +98,7 @@ export function MemberFormModal({ member, currentUserId, defaultDepartmentId, on
           <Button $variant="secondary" onClick={onClose}>
             취소
           </Button>
-          <Button type="submit" form="member-form">
+          <Button type="submit" form="member-form" disabled={pending}>
             {isNew ? "추가" : "저장"}
           </Button>
         </>
@@ -130,6 +108,12 @@ export function MemberFormModal({ member, currentUserId, defaultDepartmentId, on
         <Notice>
           <Info />
           추가하면 초기 비밀번호가 자동으로 발급됩니다. 구성원은 첫 로그인 때 비밀번호를 변경해야 합니다.
+        </Notice>
+      )}
+      {submitError && (
+        <Notice $tone="warning">
+          <AlertCircle />
+          {submitError}
         </Notice>
       )}
       <form id="member-form" onSubmit={submit} noValidate>
@@ -223,7 +207,7 @@ export function MemberFormModal({ member, currentUserId, defaultDepartmentId, on
               />
             )}
           </Field>
-          <Field label="연차 일수" required error={errors.annualLeaveTotal?.message} hint={`회사 기본값 ${data.company.defaultAnnualLeave}일`}>
+          <Field label="연차 일수" required error={errors.annualLeaveTotal?.message} hint={`회사 기본값 ${company.defaultAnnualLeave}일`}>
             {(id) => (
               <Input
                 id={id}

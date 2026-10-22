@@ -3,10 +3,20 @@
 import styled from "@emotion/styled";
 import { useState } from "react";
 import { Button, Modal, Muted, Person } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { formatMonthDay } from "@/lib/date";
-import { getMember, getMemberSummary, getRoomName } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { Reservation } from "@/lib/types";
+import { getRoomName } from "@/lib/selectors";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import { useCancelReservation } from "@/queries/reservations";
+import type { Reservation, Room } from "@/types";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
+
+const ErrorText = styled.p`
+  margin-top: 16px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
 
 const Info = styled.dl`
   display: grid;
@@ -24,24 +34,21 @@ const Info = styled.dl`
 
 interface Props {
   reservation: Reservation;
+  rooms: Room[];
   onClose: () => void;
 }
 
-export function ReservationDetailModal({ reservation, onClose }: Props) {
-  const { data, update } = useData();
+export function ReservationDetailModal({ reservation, rooms, onClose }: Props) {
   const user = useCurrentUser();
+  const { getMember, getMemberSummary } = useDirectory();
+  const cancelReservation = useCancelReservation();
   const [confirming, setConfirming] = useState(false);
-  const room = data.rooms.find((r) => r.id === reservation.roomId);
-  const owner = getMember(data, reservation.memberId);
+  const room = rooms.find((r) => r.id === reservation.roomId);
+  const owner = getMember(reservation.memberId);
+  // 버튼 표시용. 권한은 서버가 다시 확인한다.
   const canCancel = reservation.memberId === user.id || user.isManager;
 
-  const cancel = () => {
-    update((prev) => ({
-      ...prev,
-      reservations: prev.reservations.filter((r) => r.id !== reservation.id),
-    }));
-    onClose();
-  };
+  const cancel = () => cancelReservation.mutate(reservation.id, { onSuccess: onClose });
 
   const footer = confirming ? (
     <>
@@ -49,7 +56,7 @@ export function ReservationDetailModal({ reservation, onClose }: Props) {
       <Button $variant="secondary" onClick={() => setConfirming(false)}>
         아니요
       </Button>
-      <Button $variant="danger" onClick={cancel}>
+      <Button $variant="danger" disabled={cancelReservation.isPending} onClick={cancel}>
         예약 취소
       </Button>
     </>
@@ -71,7 +78,7 @@ export function ReservationDetailModal({ reservation, onClose }: Props) {
       <Info>
         <dt>회의실</dt>
         <dd>
-          {room ? `${room.name} · ${room.location} (${room.capacity}인)` : getRoomName(data, reservation)}
+          {room ? `${room.name} · ${room.location} (${room.capacity}인)` : getRoomName(rooms, reservation)}
         </dd>
         <dt>일시</dt>
         <dd>
@@ -80,12 +87,13 @@ export function ReservationDetailModal({ reservation, onClose }: Props) {
         <dt>예약자</dt>
         <dd>
           {owner ? (
-            <Person name={owner.name} color={owner.color} caption={getMemberSummary(data, owner.id)} />
+            <Person name={owner.name} color={owner.color} caption={getMemberSummary(owner.id)} />
           ) : (
-            "알 수 없음"
+            UNKNOWN_MEMBER_NAME
           )}
         </dd>
       </Info>
+      {cancelReservation.error && <ErrorText role="alert">{getErrorMessage(cancelReservation.error)}</ErrorText>}
     </Modal>
   );
 }

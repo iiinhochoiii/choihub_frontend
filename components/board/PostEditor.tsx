@@ -1,14 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { ArticleForm } from "@/components/articles/ArticleForm";
-import { BackToList, NotFoundArticle } from "@/components/articles/ArticleView";
-import { AccessDenied, PageHeader } from "@/components/ui";
-import { createId } from "@/lib/id";
+import { BackToList, isNotFoundError, NotFoundArticle } from "@/components/articles/ArticleView";
+import { AccessDenied, ErrorState, LoadingState, PageHeader } from "@/components/ui";
 import { POST_CATEGORIES } from "@/lib/labels";
 import type { ArticleFormValues } from "@/lib/schemas/article";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { PostCategory } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useCreatePost, usePost, useUpdatePost } from "@/queries/posts";
+import type { Post, PostCategory } from "@/types";
 
 const LIST_HREF = "/dashboard/board";
 
@@ -17,59 +18,52 @@ const categories = (Object.keys(POST_CATEGORIES) as PostCategory[]).map((value) 
   label: POST_CATEGORIES[value].label,
 }));
 
-/** 게시글 작성(id 없음) / 수정(id 있음, 작성자 본인만) */
+/** 게시글 작성(id 없음) / 수정(id 있음, 작성자 본인만 — 서버도 403으로 막는다) */
 export function PostEditor({ id }: { id?: string }) {
-  const router = useRouter();
-  const { data, update } = useData();
-  const user = useCurrentUser();
-  const post = id ? data.posts.find((p) => p.id === id) : undefined;
-  const title = id ? "게시글 수정" : "글쓰기";
+  return id ? <PostEditLoader id={id} /> : <PostEditorForm />;
+}
 
-  if (id && !post) {
-    return <NotFoundArticle listHref={LIST_HREF} label="목록으로 돌아가기" />;
+/** 수정할 글을 불러온 뒤 폼을 그린다. */
+function PostEditLoader({ id }: { id: string }) {
+  const user = useCurrentUser();
+  const { data: post, isPending, error, refetch } = usePost(id);
+
+  if (isPending) return <LoadingState />;
+  if (error) {
+    return isNotFoundError(error) ? (
+      <NotFoundArticle listHref={LIST_HREF} label="목록으로 돌아가기" />
+    ) : (
+      <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+    );
   }
 
-  if (post && post.authorId !== user.id) {
+  if (post.authorId !== user.id) {
     return (
       <>
-        <PageHeader title={title} />
+        <PageHeader title="게시글 수정" />
         <AccessDenied message="게시글은 작성자 본인만 수정할 수 있습니다." />
       </>
     );
   }
 
-  const handleSubmit = ({ title, category, content }: ArticleFormValues<PostCategory>) => {
-    const now = new Date().toISOString();
+  return <PostEditorForm post={post} />;
+}
+
+function PostEditorForm({ post }: { post?: Post }) {
+  const router = useRouter();
+  const createPost = useCreatePost();
+  const updatePost = useUpdatePost();
+
+  // 오류는 ArticleForm이 필드 오류/폼 메시지로 보여 준다.
+  const handleSubmit = async ({ title, category, content }: ArticleFormValues<PostCategory>) => {
+    const body = { title, category, content };
     if (post) {
-      update((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) =>
-          p.id === post.id ? { ...p, title, category, content, updatedAt: now } : p,
-        ),
-      }));
+      await updatePost.mutateAsync({ id: post.id, body });
       router.push(`${LIST_HREF}/${post.id}`);
       return;
     }
-    const newId = createId("p");
-    update((prev) => ({
-      ...prev,
-      posts: [
-        {
-          id: newId,
-          title,
-          category,
-          content,
-          authorId: user.id,
-          createdAt: now,
-          updatedAt: now,
-          views: 0,
-          likes: [],
-          comments: [],
-        },
-        ...prev.posts,
-      ],
-    }));
-    router.push(`${LIST_HREF}/${newId}`);
+    const created = await createPost.mutateAsync(body);
+    router.push(`${LIST_HREF}/${created.id}`);
   };
 
   const backHref = post ? `${LIST_HREF}/${post.id}` : LIST_HREF;
@@ -77,7 +71,10 @@ export function PostEditor({ id }: { id?: string }) {
   return (
     <>
       <BackToList href={backHref} label={post ? "게시글로 돌아가기" : "게시판 목록"} />
-      <PageHeader title={title} description="소속 직원 모두가 볼 수 있는 게시판입니다." />
+      <PageHeader
+        title={post ? "게시글 수정" : "글쓰기"}
+        description="소속 직원 모두가 볼 수 있는 게시판입니다."
+      />
       <ArticleForm
         initial={{
           title: post?.title ?? "",

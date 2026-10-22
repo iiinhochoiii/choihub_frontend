@@ -1,11 +1,14 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { AlertCircle } from "lucide-react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { Button, Field, Input, Modal, Select, Stack } from "@/components/ui";
-import { createId } from "@/lib/id";
+import { Button, Field, Input, Modal, Notice, Select, Stack } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { setServerErrors } from "@/lib/form";
 import { type DepartmentFormValues, departmentSchema } from "@/lib/schemas/member";
-import { useData } from "@/lib/store";
+import { useCreateDepartment, useDepartments } from "@/queries/directory";
 import { flattenDepartments } from "./OrgTree";
 
 interface Props {
@@ -14,7 +17,9 @@ interface Props {
 }
 
 export function DepartmentFormModal({ defaultParentId, onClose }: Props) {
-  const { data, update } = useData();
+  const departments = useDepartments();
+  const createDepartment = useCreateDepartment();
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -26,14 +31,17 @@ export function DepartmentFormModal({ defaultParentId, onClose }: Props) {
   });
 
   const submit = handleSubmit(({ name, parentId }) => {
-    if (data.departments.some((d) => d.name === name && (d.parentId ?? "") === parentId))
-      return setError("name", { message: "같은 위치에 동일한 이름의 부서가 있습니다." });
-
-    update((prev) => ({
-      ...prev,
-      departments: [...prev.departments, { id: createId("d"), name, parentId: parentId || null }],
-    }));
-    onClose();
+    setSubmitError(null);
+    // 같은 위치의 이름 중복은 서버가 검사한다.
+    createDepartment.mutate(
+      { name, parentId: parentId || null },
+      {
+        onSuccess: onClose,
+        onError: (error) => {
+          if (!setServerErrors(error, setError)) setSubmitError(getErrorMessage(error));
+        },
+      },
+    );
   });
 
   return (
@@ -47,12 +55,18 @@ export function DepartmentFormModal({ defaultParentId, onClose }: Props) {
           <Button $variant="secondary" onClick={onClose}>
             취소
           </Button>
-          <Button type="submit" form="department-form">
+          <Button type="submit" form="department-form" disabled={createDepartment.isPending}>
             추가
           </Button>
         </>
       }
     >
+      {submitError && (
+        <Notice $tone="warning">
+          <AlertCircle />
+          {submitError}
+        </Notice>
+      )}
       <form id="department-form" onSubmit={submit} noValidate>
         <Stack>
           <Field label="부서명" required error={errors.name?.message}>
@@ -69,7 +83,7 @@ export function DepartmentFormModal({ defaultParentId, onClose }: Props) {
             {(id) => (
               <Select id={id} {...register("parentId")}>
                 <option value="">(최상위)</option>
-                {flattenDepartments(data).map(({ department, depth }) => (
+                {flattenDepartments(departments).map(({ department, depth }) => (
                   <option key={department.id} value={department.id}>
                     {"　".repeat(depth)}
                     {department.name}

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { countWeekdays } from "@/lib/date";
 import { LEAVE_TYPES } from "@/lib/labels";
-import type { LeaveType } from "@/lib/types";
+import type { LeaveType } from "@/types";
 
 /** 반차는 하루(시작일)만, 그 외는 기간 내 평일 수로 신청 일수를 계산한다. */
 export function getLeavePeriod(type: LeaveType, startDate: string, endDate: string) {

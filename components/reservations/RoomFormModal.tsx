@@ -1,12 +1,20 @@
 "use client";
 
+import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Button, Field, FormGrid, Input, Modal } from "@/components/ui";
-import { createId } from "@/lib/id";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { setServerErrors } from "@/lib/form";
 import { type RoomFormInput, type RoomFormValues, roomSchema } from "@/lib/schemas/reservation";
-import { useData } from "@/lib/store";
-import type { Room } from "@/lib/types";
+import { useCreateRoom, useUpdateRoom } from "@/queries/reservations";
+import type { Room } from "@/types";
+
+const ErrorText = styled.p`
+  margin-top: 12px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
 
 interface Props {
   /** 없으면 신규 추가 */
@@ -16,7 +24,9 @@ interface Props {
 
 /** 열릴 때마다 새로 마운트되어 room 값으로 초기화된다. */
 export function RoomFormModal({ room, onClose }: Props) {
-  const { data, update } = useData();
+  const createRoom = useCreateRoom();
+  const updateRoom = useUpdateRoom();
+  const saving = createRoom.isPending || updateRoom.isPending;
   const {
     register,
     handleSubmit,
@@ -32,17 +42,16 @@ export function RoomFormModal({ room, onClose }: Props) {
     },
   });
 
+  // 같은 이름 중복은 서버가 name 필드 오류로 돌려준다.
   const submit = handleSubmit((values) => {
-    if (data.rooms.some((r) => r.id !== room?.id && r.name === values.name)) {
-      return setError("name", { message: "같은 이름의 회의실이 이미 있습니다." });
-    }
-    update((prev) => ({
-      ...prev,
-      rooms: room
-        ? prev.rooms.map((r) => (r.id === room.id ? { ...r, ...values } : r))
-        : [...prev.rooms, { id: createId("room"), ...values, active: true }],
-    }));
-    onClose();
+    const options = {
+      onSuccess: onClose,
+      onError: (err: unknown) => {
+        if (!setServerErrors(err, setError)) setError("root", { message: getErrorMessage(err) });
+      },
+    };
+    if (room) updateRoom.mutate({ id: room.id, body: values }, options);
+    else createRoom.mutate(values, options);
   });
 
   return (
@@ -55,7 +64,7 @@ export function RoomFormModal({ room, onClose }: Props) {
           <Button $variant="secondary" onClick={onClose}>
             취소
           </Button>
-          <Button type="submit" form="room-form">
+          <Button type="submit" form="room-form" disabled={saving}>
             {room ? "저장" : "추가"}
           </Button>
         </>
@@ -93,13 +102,14 @@ export function RoomFormModal({ room, onClose }: Props) {
             {(id) => <Input id={id} placeholder="예: 8층" aria-invalid={!!errors.location} {...register("location")} />}
           </Field>
           <div data-span="full">
-            <Field label="장비" hint="쉼표(,)로 구분해 입력하세요.">
+            <Field label="장비" hint="쉼표(,)로 구분해 입력하세요." error={errors.equipment?.message}>
               {(id) => (
                 <Input id={id} placeholder="예: TV, 화이트보드, 화상회의" {...register("equipment")} />
               )}
             </Field>
           </div>
         </FormGrid>
+        {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
       </form>
     </Modal>
   );

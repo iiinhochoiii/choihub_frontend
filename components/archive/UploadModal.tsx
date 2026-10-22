@@ -3,13 +3,15 @@
 import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Info, Upload } from "lucide-react";
+import { useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { Button, Field, Modal, Notice, Select, Stack, Textarea } from "@/components/ui";
-import { createId } from "@/lib/id";
+import { setServerErrors } from "@/lib/form";
 import { FILE_DESCRIPTION_MAX, type UploadFormValues, uploadSchema } from "@/lib/schemas/archive";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { ArchiveFile } from "@/lib/types";
-import { formatFileSize, MAX_STORED_FILE_SIZE, readAsDataUrl } from "./format";
+import { useUploadArchiveFile } from "@/queries/archive";
+import type { ArchiveFolder } from "@/types";
+import { formatFileSize, MAX_STORED_FILE_SIZE } from "./format";
 
 const DropZone = styled.label`
   display: flex;
@@ -61,24 +63,26 @@ const ErrorText = styled.p`
 
 interface UploadModalProps {
   open: boolean;
-  defaultFolder: string;
+  folders: ArchiveFolder[];
+  defaultFolderId: string;
   onClose: () => void;
 }
 
-export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) {
-  const { data, update } = useData();
-  const user = useCurrentUser();
+export function UploadModal({ open, folders, defaultFolderId, onClose }: UploadModalProps) {
+  const uploadFile = useUploadArchiveFile();
+  const [formError, setFormError] = useState("");
   const {
     register,
     control,
     handleSubmit,
     getValues,
     reset,
-    formState: { errors, isSubmitting },
+    setError,
+    formState: { errors },
   } = useForm<UploadFormValues>({
     resolver: zodResolver(uploadSchema),
     // 파일은 선택 전까지 비워 둔다.
-    defaultValues: { folder: defaultFolder ?? "", description: "" },
+    defaultValues: { folderId: defaultFolderId ?? "", description: "" },
   });
   const file = useWatch({ control, name: "file" });
 
@@ -86,32 +90,20 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
 
   const handleClose = () => {
     // 선택한 폴더는 유지하고 파일·설명만 비운다.
-    reset({ folder: getValues("folder"), description: "" });
+    reset({ folderId: getValues("folderId"), description: "" });
+    setFormError("");
     onClose();
   };
 
-  const submit = handleSubmit(async ({ file, folder, description }) => {
-    let dataUrl: string | undefined;
-    if (file.size <= MAX_STORED_FILE_SIZE) {
-      try {
-        dataUrl = await readAsDataUrl(file);
-      } catch {
-        dataUrl = undefined;
-      }
-    }
-    const entry: ArchiveFile = {
-      id: createId("file"),
-      name: file.name,
-      folder,
-      size: file.size,
-      mimeType: file.type || "application/octet-stream",
-      uploaderId: user.id,
-      uploadedAt: new Date().toISOString(),
-      description,
-      dataUrl,
-    };
-    update((prev) => ({ ...prev, archiveFiles: [entry, ...prev.archiveFiles] }));
-    handleClose();
+  // 1MB 초과 파일의 내용 보관 여부는 서버가 정한다(응답의 hasContent).
+  const submit = handleSubmit((values) => {
+    setFormError("");
+    uploadFile.mutate(values, {
+      onSuccess: handleClose,
+      onError: (error) => {
+        if (!setServerErrors(error, setError)) setFormError(getErrorMessage(error));
+      },
+    });
   });
 
   return (
@@ -124,8 +116,8 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
           <Button $variant="secondary" onClick={handleClose}>
             취소
           </Button>
-          <Button onClick={submit} disabled={isSubmitting}>
-            {isSubmitting ? "업로드 중..." : "업로드"}
+          <Button onClick={submit} disabled={uploadFile.isPending}>
+            {uploadFile.isPending ? "업로드 중..." : "업로드"}
           </Button>
         </>
       }
@@ -158,25 +150,25 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
           <Notice $tone="warning" style={{ marginBottom: 0 }}>
             <Info />
             <span>
-              데모 환경에서는 {formatFileSize(MAX_STORED_FILE_SIZE)} 이하 파일만 내용이 저장됩니다. 이 파일은
+              {formatFileSize(MAX_STORED_FILE_SIZE)} 이하 파일만 내용이 저장됩니다. 이 파일은
               이름·크기 등 정보만 등록되며 다운로드할 수 없습니다.
             </span>
           </Notice>
         )}
 
-        <Field label="폴더" required error={errors.folder?.message}>
+        <Field label="폴더" required error={errors.folderId?.message}>
           {(id) => (
-            <Select id={id} aria-invalid={!!errors.folder} {...register("folder")}>
-              {data.archiveFolders.map((f) => (
-                <option key={f} value={f}>
-                  {f}
+            <Select id={id} aria-invalid={!!errors.folderId} {...register("folderId")}>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
                 </option>
               ))}
             </Select>
           )}
         </Field>
 
-        <Field label="설명">
+        <Field label="설명" error={errors.description?.message}>
           {(id) => (
             <Textarea
               id={id}
@@ -187,6 +179,8 @@ export function UploadModal({ open, defaultFolder, onClose }: UploadModalProps) 
             />
           )}
         </Field>
+
+        {formError && <ErrorText role="alert">{formError}</ErrorText>}
       </Stack>
     </Modal>
   );

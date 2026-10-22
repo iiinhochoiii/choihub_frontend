@@ -4,8 +4,8 @@ import styled from "@emotion/styled";
 import { Mail, Phone } from "lucide-react";
 import { Avatar, Badge, Person, StatusBadge, Table, TableWrap } from "@/components/ui";
 import { MEMBER_STATUS, ROLE_LABELS } from "@/lib/labels";
-import { getDepartmentName } from "@/lib/selectors";
-import type { GroupwareData, Member } from "@/lib/types";
+import { useDirectory } from "@/queries/directory";
+import type { Member } from "@/types";
 
 const Grid = styled.ul`
   display: grid;
@@ -82,13 +82,13 @@ const Contact = styled.div`
 `;
 
 interface MemberListProps {
-  data: GroupwareData;
   members: Member[];
   view: "card" | "table";
   onSelect: (member: Member) => void;
 }
 
-export function MemberList({ data, members, view, onSelect }: MemberListProps) {
+export function MemberList({ members, view, onSelect }: MemberListProps) {
+  const { getDepartmentName } = useDirectory();
   if (view === "table") {
     return (
       <TableWrap>
@@ -110,7 +110,7 @@ export function MemberList({ data, members, view, onSelect }: MemberListProps) {
                 <td>
                   <Person name={m.name} color={m.color} />
                 </td>
-                <td>{getDepartmentName(data, m.departmentId)}</td>
+                <td>{getDepartmentName(m.departmentId)}</td>
                 <td>{m.position}</td>
                 <td>
                   <StatusBadge value={MEMBER_STATUS[m.status]} />
@@ -136,7 +136,7 @@ export function MemberList({ data, members, view, onSelect }: MemberListProps) {
               <div>
                 <strong>{m.name}</strong> {m.role === "manager" && <Badge $tone="primary">{ROLE_LABELS.manager}</Badge>}
                 <p>
-                  {m.position} · {getDepartmentName(data, m.departmentId)}
+                  {m.position} · {getDepartmentName(m.departmentId)}
                 </p>
               </div>
               <StatusBadge value={MEMBER_STATUS[m.status]} />

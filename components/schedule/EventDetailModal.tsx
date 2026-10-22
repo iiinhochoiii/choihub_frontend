@@ -3,11 +3,14 @@
 import styled from "@emotion/styled";
 import { useState } from "react";
 import { Badge, Button, Dot, Modal, Muted, Person } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { formatMonthDay } from "@/lib/date";
 import { EVENT_CATEGORIES } from "@/lib/labels";
-import { getMember, getMemberSummary } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { CalendarEvent } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import { useDeleteEvent } from "@/queries/events";
+import type { CalendarEvent } from "@/types";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
 
 const Info = styled.dl`
   display: grid;
@@ -29,22 +32,29 @@ const Info = styled.dl`
   }
 `;
 
+const ErrorText = styled.p`
+  margin-top: 16px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
+
 interface Props {
   event: CalendarEvent;
   onClose: () => void;
 }
 
 export function EventDetailModal({ event, onClose }: Props) {
-  const { data, update } = useData();
   const user = useCurrentUser();
+  const { getMember, getMemberSummary } = useDirectory();
+  const deleteEvent = useDeleteEvent();
   const [confirming, setConfirming] = useState(false);
-  const owner = getMember(data, event.ownerId);
+  const owner = getMember(event.ownerId);
   const category = EVENT_CATEGORIES[event.category];
+  // 버튼 노출용. 권한은 서버가 다시 검사한다.
   const canDelete = event.ownerId === user.id || user.isManager;
 
   const remove = () => {
-    update((prev) => ({ ...prev, events: prev.events.filter((e) => e.id !== event.id) }));
-    onClose();
+    deleteEvent.mutate(event.id, { onSuccess: onClose });
   };
 
   const footer = confirming ? (
@@ -53,7 +63,7 @@ export function EventDetailModal({ event, onClose }: Props) {
       <Button $variant="secondary" onClick={() => setConfirming(false)}>
         취소
       </Button>
-      <Button $variant="danger" onClick={remove}>
+      <Button $variant="danger" onClick={remove} disabled={deleteEvent.isPending}>
         삭제
       </Button>
     </>
@@ -86,14 +96,15 @@ export function EventDetailModal({ event, onClose }: Props) {
         <dt>등록자</dt>
         <dd>
           {owner ? (
-            <Person name={owner.name} color={owner.color} caption={getMemberSummary(data, owner.id)} />
+            <Person name={owner.name} color={owner.color} caption={getMemberSummary(owner.id)} />
           ) : (
-            "알 수 없음"
+            UNKNOWN_MEMBER_NAME
           )}
         </dd>
         <dt>설명</dt>
         <dd>{event.description || <Muted>설명 없음</Muted>}</dd>
       </Info>
+      {deleteEvent.error && <ErrorText role="alert">{getErrorMessage(deleteEvent.error)}</ErrorText>}
     </Modal>
   );
 }

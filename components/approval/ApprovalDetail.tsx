@@ -6,13 +6,16 @@ import { ArrowLeft, Check, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import {
+  AccessDenied,
   Badge,
   Button,
   ButtonLink,
   Card,
-  ConfirmModal,
   EmptyState,
+  ErrorState,
   Field,
+  LoadingState,
+  Modal,
   Muted,
   PageHeader,
   Person,
@@ -22,15 +25,19 @@ import {
   StatusBadge,
   Textarea,
 } from "@/components/ui";
-import { applyDecision, canWithdraw, isMyTurn } from "@/lib/approval";
+import { ApiError, getErrorMessage } from "@/apis/defaultInstance";
+import { canWithdraw, isMyTurn } from "@/lib/approval";
 import { formatDateTime } from "@/lib/date";
+import { setServerErrors } from "@/lib/form";
 import { APPROVAL_DOC_STATUS, APPROVAL_STEP_STATUS } from "@/lib/labels";
 import { type ApprovalDecisionFormValues, approvalDecisionSchema } from "@/lib/schemas/approval";
-import { getMember, getMemberSummary } from "@/lib/selectors";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { ApprovalDocument } from "@/lib/types";
+import { useApprovalDoc, useDecideApprovalDoc, useWithdrawApprovalDoc } from "@/queries/approval";
+import { useCurrentUser } from "@/queries/auth";
+import { useDirectory } from "@/queries/directory";
+import type { ApprovalDocument } from "@/types";
 import { ApprovalLine } from "./ApprovalLine";
 import { formatFieldValue } from "./fieldValue";
+import { UNKNOWN_MEMBER_NAME } from "@/lib/selectors";
 
 const Meta = styled.dl`
   display: grid;
@@ -92,6 +99,11 @@ const Values = styled.dl`
   }
 `;
 
+const ErrorText = styled.p`
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
+
 const History = styled.ol`
   display: flex;
   flex-direction: column;
@@ -116,13 +128,58 @@ const History = styled.ol`
   }
 `;
 
+function BackToList() {
+  return (
+    <ButtonLink href="/dashboard/approval" $variant="secondary" $size="sm">
+      목록으로
+    </ButtonLink>
+  );
+}
+
 export function ApprovalDetail({ id }: { id: string }) {
-  const { data, update } = useData();
+  const { data: doc, isPending, error, refetch } = useApprovalDoc(id);
+
+  if (isPending) {
+    return (
+      <Card>
+        <LoadingState />
+      </Card>
+    );
+  }
+
+  if (error) {
+    // 기안자·결재선·매니저가 아니면 서버가 403/404로 막는다. 잘못된 주소(id 형식 오류)는 400으로 온다.
+    const status = error instanceof ApiError ? error.status : 0;
+    return (
+      <Card>
+        {status === 404 || status === 400 ? (
+          <EmptyState
+            title="문서를 찾을 수 없습니다."
+            description="삭제되었거나 열람 권한이 없는 문서입니다."
+            action={<BackToList />}
+          />
+        ) : status === 403 ? (
+          <AccessDenied message={getErrorMessage(error)} />
+        ) : (
+          <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+        )}
+      </Card>
+    );
+  }
+
+  return <DocumentView doc={doc} />;
+}
+
+function DocumentView({ doc }: { doc: ApprovalDocument }) {
   const user = useCurrentUser();
+  const { getMember, getMemberSummary } = useDirectory();
+  const decideMutation = useDecideApprovalDoc();
+  const withdrawMutation = useWithdrawApprovalDoc();
   const {
     register,
     handleSubmit,
     setValue,
+    setError,
     reset,
     formState: { errors },
   } = useForm<ApprovalDecisionFormValues>({
@@ -131,44 +188,32 @@ export function ApprovalDetail({ id }: { id: string }) {
   });
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
 
-  const doc = data.approvalDocs.find((d) => d.id === id);
-
-  if (!doc) {
-    return (
-      <Card>
-        <EmptyState
-          title="문서를 찾을 수 없습니다."
-          description="삭제되었거나 잘못된 주소입니다."
-          action={
-            <ButtonLink href="/dashboard/approval" $variant="secondary" $size="sm">
-              목록으로
-            </ButtonLink>
-          }
-        />
-      </Card>
-    );
-  }
-
   const myTurn = isMyTurn(doc, user.id);
   const withdrawable = canWithdraw(doc, user.id);
-  const drafter = getMember(data, doc.drafterId);
+  const drafter = getMember(doc.drafterId);
   const actedSteps = doc.steps.filter((s) => s.actedAt);
 
-  const saveDoc = (next: ApprovalDocument) =>
-    update((prev) => ({
-      ...prev,
-      approvalDocs: prev.approvalDocs.map((d) => (d.id === next.id ? next : d)),
-    }));
-
-  const submitDecision = handleSubmit(({ decision, comment }) => {
-    saveDoc(applyDecision(doc, user.id, decision, comment));
-    reset();
-  });
+  const submitDecision = handleSubmit(({ decision, comment }) =>
+    decideMutation.mutate(
+      { id: doc.id, body: { decision, comment: comment || undefined } },
+      {
+        onSuccess: () => reset(),
+        onError: (err) => {
+          if (!setServerErrors(err, setError)) setError("root", { message: getErrorMessage(err) });
+        },
+      },
+    ),
+  );
 
   /** 누른 버튼(승인/반려)을 폼 값으로 넣고 제출한다. 반려 의견 필수 여부는 스키마가 검사한다. */
   const decide = (decision: ApprovalDecisionFormValues["decision"]) => {
     setValue("decision", decision);
     void submitDecision();
+  };
+
+  const closeWithdraw = () => {
+    setConfirmWithdraw(false);
+    withdrawMutation.reset();
   };
 
   return (
@@ -208,7 +253,7 @@ export function ApprovalDetail({ id }: { id: string }) {
               </div>
               <div>
                 <dt>기안자</dt>
-                <dd>{getMemberSummary(data, doc.drafterId)}</dd>
+                <dd>{getMemberSummary(doc.drafterId)}</dd>
               </div>
               <div>
                 <dt>기안일시</dt>
@@ -246,12 +291,13 @@ export function ApprovalDetail({ id }: { id: string }) {
                   />
                 )}
               </Field>
+              {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
               <Row $justify="flex-end">
-                <Button $variant="danger" onClick={() => decide("rejected")}>
+                <Button $variant="danger" disabled={decideMutation.isPending} onClick={() => decide("rejected")}>
                   <X />
                   반려
                 </Button>
-                <Button onClick={() => decide("approved")}>
+                <Button disabled={decideMutation.isPending} onClick={() => decide("approved")}>
                   <Check />
                   승인
                 </Button>
@@ -265,17 +311,17 @@ export function ApprovalDetail({ id }: { id: string }) {
           <History>
             <li>
               <Row $justify="space-between">
-                <Person name={drafter?.name ?? "알 수 없음"} color={drafter?.color} caption="기안" />
+                <Person name={drafter?.name ?? UNKNOWN_MEMBER_NAME} color={drafter?.color} caption="기안" />
                 <Muted>{formatDateTime(doc.createdAt)}</Muted>
               </Row>
             </li>
             {actedSteps.map((step, index) => {
-              const member = getMember(data, step.approverId);
+              const member = getMember(step.approverId);
               return (
                 <li key={`${step.approverId}-${index}`}>
                   <Row $justify="space-between">
                     <Row>
-                      <Person name={member?.name ?? "알 수 없음"} color={member?.color} caption={member?.position} />
+                      <Person name={member?.name ?? UNKNOWN_MEMBER_NAME} color={member?.color} caption={member?.position} />
                       <StatusBadge value={APPROVAL_STEP_STATUS[step.status]} />
                     </Row>
                     <Muted>{step.actedAt && formatDateTime(step.actedAt)}</Muted>
@@ -296,21 +342,31 @@ export function ApprovalDetail({ id }: { id: string }) {
         </Card>
       </Stack>
 
-      <ConfirmModal
+      <Modal
         open={confirmWithdraw}
         title="문서 회수"
-        message="결재 진행을 중단하고 문서를 회수합니다. 계속하시겠습니까?"
-        confirmLabel="회수"
-        danger
-        onClose={() => setConfirmWithdraw(false)}
-        onConfirm={() =>
-          saveDoc({
-            ...doc,
-            status: "withdrawn",
-            steps: doc.steps.map((s) => (s.status === "pending" ? { ...s, status: "waiting" } : s)),
-          })
+        width={400}
+        onClose={closeWithdraw}
+        footer={
+          <>
+            <Button $variant="secondary" onClick={closeWithdraw}>
+              취소
+            </Button>
+            <Button
+              $variant="danger"
+              disabled={withdrawMutation.isPending}
+              onClick={() => withdrawMutation.mutate(doc.id, { onSuccess: closeWithdraw })}
+            >
+              회수
+            </Button>
+          </>
         }
-      />
+      >
+        <Stack $gap={12}>
+          <p>결재 진행을 중단하고 문서를 회수합니다. 계속하시겠습니까?</p>
+          {withdrawMutation.error && <ErrorText role="alert">{getErrorMessage(withdrawMutation.error)}</ErrorText>}
+        </Stack>
+      </Modal>
     </>
   );
 }

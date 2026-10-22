@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TASK_PRIORITY, TASK_STATUS } from "@/lib/labels";
-import type { TaskPriority, TaskStatus } from "@/lib/types";
+import type { TaskPriority, TaskStatus } from "@/types";
 
 export const taskSchema = z.object({
   title: z.string().trim().min(1, "업무 제목을 입력하세요."),

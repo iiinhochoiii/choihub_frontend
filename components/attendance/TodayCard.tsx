@@ -3,11 +3,12 @@
 import styled from "@emotion/styled";
 import { LogIn, LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button, Card, StatusBadge } from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { Button, Card, ErrorState, LoadingState, StatusBadge } from "@/components/ui";
 import { ATTENDANCE_STATUS, getAttendanceStatus, getWorkedMinutes } from "@/lib/attendance";
-import { formatDuration, formatLongDate, nowTime, timeToMinutes, toDateKey } from "@/lib/date";
-import { createId } from "@/lib/id";
-import { useCurrentUser, useData } from "@/lib/store";
+import { formatDuration, formatLongDate, timeToMinutes } from "@/lib/date";
+import { useCheckIn, useCheckOut, useTodayAttendance } from "@/queries/attendance";
+import { useCompany } from "@/queries/directory";
 import { mq } from "@/styles/theme";
 
 const Wrap = styled(Card)`
@@ -74,11 +75,19 @@ const Warn = styled.p`
   color: ${({ theme }) => theme.colors.warning};
 `;
 
+const ErrorText = styled.p`
+  margin-top: 8px;
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 export function TodayCard() {
-  const { data, update } = useData();
-  const user = useCurrentUser();
+  const company = useCompany();
+  const { data: today, isPending, error, refetch } = useTodayAttendance();
+  const checkInMutation = useCheckIn();
+  const checkOutMutation = useCheckOut();
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -86,9 +95,24 @@ export function TodayCard() {
     return () => clearInterval(timer);
   }, []);
 
-  const today = toDateKey(now);
-  const record = data.attendance.find((r) => r.memberId === user.id && r.date === today);
-  const status = getAttendanceStatus(record, data.company);
+  if (isPending) {
+    return (
+      <Card>
+        <LoadingState />
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Card>
+        <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+      </Card>
+    );
+  }
+
+  // 오늘 날짜와 출퇴근 시각은 서버(회사 시간대) 기준이다.
+  const record = today.record;
+  const status = getAttendanceStatus(record, company);
   const currentTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
   // 근무중이면 현재 시각 기준으로 계산
@@ -98,27 +122,20 @@ export function TodayCard() {
       : getWorkedMinutes({ ...record, checkOut: currentTime })
     : 0;
 
+  const busy = checkInMutation.isPending || checkOutMutation.isPending;
+  const actionError = checkInMutation.error ?? checkOutMutation.error;
+
   const checkIn = () => {
-    update((prev) => ({
-      ...prev,
-      attendance: [
-        ...prev.attendance,
-        { id: createId("a"), memberId: user.id, date: today, checkIn: nowTime(), checkOut: null },
-      ],
-    }));
+    checkOutMutation.reset();
+    checkInMutation.mutate();
   };
 
   const checkOut = () => {
-    if (!record) return;
-    update((prev) => ({
-      ...prev,
-      attendance: prev.attendance.map((r) =>
-        r.id === record.id ? { ...r, checkOut: nowTime() } : r,
-      ),
-    }));
+    checkInMutation.reset();
+    checkOutMutation.mutate();
   };
 
-  const isLateNow = timeToMinutes(currentTime) > timeToMinutes(data.company.workStart);
+  const isLateNow = timeToMinutes(currentTime) > timeToMinutes(company.workStart);
 
   return (
     <Wrap>
@@ -128,8 +145,7 @@ export function TodayCard() {
           {pad(now.getHours())}:{pad(now.getMinutes())}:{pad(now.getSeconds())}
         </strong>
         <p style={{ marginTop: 8 }}>
-          근무시간 {data.company.workStart} ~ {data.company.workEnd} ·{" "}
-          <StatusBadge value={ATTENDANCE_STATUS[status]} />
+          근무시간 {company.workStart} ~ {company.workEnd} · <StatusBadge value={ATTENDANCE_STATUS[status]} />
         </p>
       </ClockBox>
 
@@ -149,7 +165,7 @@ export function TodayCard() {
           </div>
         </Info>
         <Actions>
-          <Button $size="lg" onClick={checkIn} disabled={!!record}>
+          <Button $size="lg" onClick={checkIn} disabled={!!record || busy}>
             <LogIn />
             출근하기
           </Button>
@@ -157,15 +173,14 @@ export function TodayCard() {
             $size="lg"
             $variant="secondary"
             onClick={checkOut}
-            disabled={!record || !!record.checkOut}
+            disabled={!record || !!record.checkOut || busy}
           >
             <LogOut />
             퇴근하기
           </Button>
         </Actions>
-        {!record && isLateNow && (
-          <Warn>출근 기준 시각({data.company.workStart})이 지나 지각으로 기록됩니다.</Warn>
-        )}
+        {!record && isLateNow && <Warn>출근 기준 시각({company.workStart})이 지나 지각으로 기록됩니다.</Warn>}
+        {actionError && <ErrorText role="alert">{getErrorMessage(actionError)}</ErrorText>}
       </div>
     </Wrap>
   );

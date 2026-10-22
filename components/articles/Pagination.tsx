@@ -4,6 +4,7 @@ import styled from "@emotion/styled";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { IconButton } from "@/components/ui";
 
+/** 서버 목록의 기본 페이지 크기 (응답의 pageSize를 우선한다) */
 export const PAGE_SIZE = 10;
 
 const Wrap = styled.nav`
@@ -64,14 +65,4 @@ export function Pagination({ page, total, pageSize = PAGE_SIZE, onChange }: Pagi
       </IconButton>
     </Wrap>
   );
-}
-
-/** 현재 페이지 항목만 잘라낸다. 범위를 벗어난 페이지는 마지막 페이지로 보정한다. */
-export function paginate<T>(items: T[], page: number, pageSize = PAGE_SIZE) {
-  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
-  const current = Math.min(Math.max(1, page), pageCount);
-  return {
-    page: current,
-    items: items.slice((current - 1) * pageSize, current * pageSize),
-  };
 }

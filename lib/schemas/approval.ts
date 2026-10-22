@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { FormField } from "@/lib/types";
+import type { FormField } from "@/types";
 
 /** 결재 문서 기안. 입력 항목은 양식마다 달라 양식 정의로 스키마를 만든다. */
 export function createApprovalDraftSchema(fields: FormField[]) {
@@ -35,7 +35,8 @@ export const approvalDecisionSchema = z
 export type ApprovalDecisionFormValues = z.infer<typeof approvalDecisionSchema>;
 
 const formFieldSchema = z.object({
-  id: z.string(),
+  /** 기존 항목은 id를 유지하고, 새 항목은 비워 두면 서버가 만든다. */
+  id: z.string().optional(),
   label: z.string().trim().min(1, "모든 입력 항목의 이름을 입력하세요."),
   type: z.enum(["text", "textarea", "number", "date"]),
   required: z.boolean(),

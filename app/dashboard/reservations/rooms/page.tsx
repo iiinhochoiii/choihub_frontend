@@ -2,7 +2,7 @@
 
 import { RoomManager } from "@/components/reservations/RoomManager";
 import { AccessDenied, PageHeader } from "@/components/ui";
-import { useCurrentUser } from "@/lib/store";
+import { useCurrentUser } from "@/queries/auth";
 
 export default function RoomManagementPage() {
   const user = useCurrentUser();

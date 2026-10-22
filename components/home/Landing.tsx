@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { LogoMark } from "@/components/common/LogoMark";
 import { ButtonLink, transientOptions } from "@/components/ui";
-import { useAuth } from "@/lib/store";
+import { useAuth } from "@/queries/auth";
 import { FeatureSpotlights } from "./FeatureSpotlights";
 import { mq } from "@/styles/theme";
 

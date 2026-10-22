@@ -4,11 +4,14 @@ import styled from "@emotion/styled";
 import { Heart, PenSquare } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { paginate, Pagination, PAGE_SIZE } from "@/components/articles/Pagination";
+import { useState } from "react";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { Pagination } from "@/components/articles/Pagination";
 import {
   ButtonLink,
   EmptyState,
+  ErrorState,
+  LoadingState,
   MutedCell,
   PageHeader,
   SearchInput,
@@ -21,9 +24,9 @@ import {
 } from "@/components/ui";
 import { formatDate, formatRelative, isWithinDays } from "@/lib/date";
 import { POST_CATEGORIES } from "@/lib/labels";
-import { getMemberName } from "@/lib/selectors";
-import { useData } from "@/lib/store";
-import type { PostCategory } from "@/lib/types";
+import { useDirectory } from "@/queries/directory";
+import { usePosts } from "@/queries/posts";
+import type { PostCategory } from "@/types";
 
 type CategoryFilter = "all" | PostCategory;
 
@@ -85,35 +88,89 @@ const IconStat = styled.span`
 
 export function BoardList() {
   const router = useRouter();
-  const { data } = useData();
+  const { getMemberName } = useDirectory();
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
 
-  const filtered = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    return data.posts
-      .filter(
-        (p) =>
-          (category === "all" || p.category === category) &&
-          (!keyword ||
-            p.title.toLowerCase().includes(keyword) ||
-            p.content.toLowerCase().includes(keyword) ||
-            getMemberName(data, p.authorId).includes(keyword)),
-      )
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [data, category, query]);
+  // 페이지·분류·검색(제목·내용·작성자 이름)·최신순 정렬은 서버가 처리한다.
+  const { data, isPending, error, refetch } = usePosts({
+    page,
+    category: category === "all" ? undefined : category,
+    q: query.trim(),
+  });
 
-  const current = paginate(filtered, page);
-
+  const counts = data?.categoryCounts;
   const tabItems = [
-    { value: "all" as const, label: "전체", count: data.posts.length },
+    { value: "all" as const, label: "전체", count: counts?.all ?? 0 },
     ...(Object.keys(POST_CATEGORIES) as PostCategory[]).map((key) => ({
       value: key,
       label: POST_CATEGORIES[key].label,
-      count: data.posts.filter((p) => p.category === key).length,
+      count: counts?.[key] ?? 0,
     })),
   ];
+
+  const renderTable = () => {
+    if (isPending) return <LoadingState />;
+    if (error) return <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />;
+    if (data.items.length === 0) {
+      return (
+        <EmptyState
+          title="게시글이 없습니다"
+          description="첫 번째 글을 작성해 보세요."
+          action={
+            <ButtonLink href="/dashboard/board/new" $size="sm" style={{ marginTop: 8 }}>
+              글쓰기
+            </ButtonLink>
+          }
+        />
+      );
+    }
+    return (
+      <Table>
+        <thead>
+          <tr>
+            <th style={{ width: 72 }}>번호</th>
+            <th style={{ width: 100 }}>분류</th>
+            <th>제목</th>
+            <th style={{ width: 110 }}>작성자</th>
+            <th style={{ width: 110 }}>작성일</th>
+            <th style={{ width: 80 }}>조회</th>
+            <th style={{ width: 80 }}>좋아요</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.items.map((post, index) => (
+            <tr key={post.id} data-clickable="true" onClick={() => router.push(`/dashboard/board/${post.id}`)}>
+              <MutedCell>{data.total - ((data.page - 1) * data.pageSize + index)}</MutedCell>
+              <td>
+                <StatusBadge value={POST_CATEGORIES[post.category]} />
+              </td>
+              <TitleCell>
+                <TitleLink href={`/dashboard/board/${post.id}`} onClick={(e) => e.stopPropagation()}>
+                  <span>{post.title}</span>
+                  {post.commentCount > 0 && (
+                    <CommentCount aria-label={`댓글 ${post.commentCount}개`}>[{post.commentCount}]</CommentCount>
+                  )}
+                </TitleLink>
+              </TitleCell>
+              <td>{getMemberName(post.authorId)}</td>
+              <MutedCell>
+                {isWithinDays(post.createdAt, 1) ? formatRelative(post.createdAt) : formatDate(post.createdAt)}
+              </MutedCell>
+              <MutedCell>{post.views.toLocaleString()}</MutedCell>
+              <MutedCell>
+                <IconStat>
+                  <Heart />
+                  {post.likeCount}
+                </IconStat>
+              </MutedCell>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    );
+  };
 
   return (
     <>
@@ -141,7 +198,7 @@ export function BoardList() {
 
       <Toolbar>
         <ResultCount>
-          총 <strong>{filtered.length}</strong>개의 글
+          총 <strong>{data?.total ?? 0}</strong>개의 글
         </ResultCount>
         <Search
           type="search"
@@ -155,75 +212,11 @@ export function BoardList() {
         />
       </Toolbar>
 
-      <TableWrap>
-        {filtered.length === 0 ? (
-          <EmptyState
-            title="게시글이 없습니다"
-            description="첫 번째 글을 작성해 보세요."
-            action={
-              <ButtonLink href="/dashboard/board/new" $size="sm" style={{ marginTop: 8 }}>
-                글쓰기
-              </ButtonLink>
-            }
-          />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <th style={{ width: 72 }}>번호</th>
-                <th style={{ width: 100 }}>분류</th>
-                <th>제목</th>
-                <th style={{ width: 110 }}>작성자</th>
-                <th style={{ width: 110 }}>작성일</th>
-                <th style={{ width: 80 }}>조회</th>
-                <th style={{ width: 80 }}>좋아요</th>
-              </tr>
-            </thead>
-            <tbody>
-              {current.items.map((post, index) => (
-                <tr
-                  key={post.id}
-                  data-clickable="true"
-                  onClick={() => router.push(`/dashboard/board/${post.id}`)}
-                >
-                  <MutedCell>{filtered.length - ((current.page - 1) * PAGE_SIZE + index)}</MutedCell>
-                  <td>
-                    <StatusBadge value={POST_CATEGORIES[post.category]} />
-                  </td>
-                  <TitleCell>
-                    <TitleLink
-                      href={`/dashboard/board/${post.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <span>{post.title}</span>
-                      {post.comments.length > 0 && (
-                        <CommentCount aria-label={`댓글 ${post.comments.length}개`}>
-                          [{post.comments.length}]
-                        </CommentCount>
-                      )}
-                    </TitleLink>
-                  </TitleCell>
-                  <td>{getMemberName(data, post.authorId)}</td>
-                  <MutedCell>
-                    {isWithinDays(post.createdAt, 1)
-                      ? formatRelative(post.createdAt)
-                      : formatDate(post.createdAt)}
-                  </MutedCell>
-                  <MutedCell>{post.views.toLocaleString()}</MutedCell>
-                  <MutedCell>
-                    <IconStat>
-                      <Heart />
-                      {post.likes.length}
-                    </IconStat>
-                  </MutedCell>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </TableWrap>
+      <TableWrap>{renderTable()}</TableWrap>
 
-      <Pagination page={current.page} total={filtered.length} onChange={setPage} />
+      {data && (
+        <Pagination page={data.page} total={data.total} pageSize={data.pageSize} onChange={setPage} />
+      )}
     </>
   );
 }

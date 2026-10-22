@@ -8,6 +8,8 @@ export { ConfirmModal, Modal, ModalFooter } from "./Modal";
 export {
   AccessDenied,
   EmptyState,
+  ErrorState,
+  LoadingState,
   Muted,
   Notice,
   PageHeader,

@@ -7,10 +7,24 @@ import { MyReservations } from "@/components/reservations/MyReservations";
 import { ReservationDetailModal } from "@/components/reservations/ReservationDetailModal";
 import { ReservationFormModal, type ReservationDraft } from "@/components/reservations/ReservationFormModal";
 import { Timeline } from "@/components/reservations/Timeline";
-import { Button, ButtonLink, EmptyState, IconButton, Input, Muted, PageHeader, Row, Stack } from "@/components/ui";
+import {
+  Button,
+  ButtonLink,
+  EmptyState,
+  ErrorState,
+  IconButton,
+  Input,
+  LoadingState,
+  Muted,
+  PageHeader,
+  Row,
+  Stack,
+} from "@/components/ui";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { addDays, formatMonthDay, parseDateKey, toDateKey, todayKey } from "@/lib/date";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { Reservation } from "@/lib/types";
+import { useCurrentUser } from "@/queries/auth";
+import { useReservationsByDate, useRooms } from "@/queries/reservations";
+import type { Reservation } from "@/types";
 
 const DateInput = styled(Input)`
   width: 160px;
@@ -40,15 +54,23 @@ const Legend = styled.span`
 `;
 
 export default function ReservationsPage() {
-  const { data } = useData();
   const user = useCurrentUser();
-  const firstActiveRoom = data.rooms.find((room) => room.active);
   const [date, setDate] = useState(() => todayKey());
+  const roomsQuery = useRooms();
+  // 시간표에는 선택한 날짜의 회사 전체 예약을 받아 그린다.
+  const reservationsQuery = useReservationsByDate(date);
+  const rooms = roomsQuery.data ?? [];
+  const firstActiveRoom = rooms.find((room) => room.active);
   const [draft, setDraft] = useState<ReservationDraft | null>(null);
   const [detail, setDetail] = useState<Reservation | null>(null);
 
   const shift = (days: number) => setDate((d) => toDateKey(addDays(parseDateKey(d), days)));
-  const count = data.reservations.filter((r) => r.date === date).length;
+  const count = reservationsQuery.isPlaceholderData ? undefined : reservationsQuery.data?.length;
+  const loadError = roomsQuery.error ?? reservationsQuery.error;
+  const retry = () => {
+    if (roomsQuery.error) void roomsQuery.refetch();
+    if (reservationsQuery.error) void reservationsQuery.refetch();
+  };
 
   return (
     <>
@@ -95,7 +117,8 @@ export default function ReservationsPage() {
           </Row>
           <Row $gap={12}>
             <Muted>
-              {formatMonthDay(date)} · 예약 {count}건
+              {formatMonthDay(date)}
+              {count !== undefined && ` · 예약 ${count}건`}
             </Muted>
             <Legend>
               <i data-mine="true" />내 예약
@@ -107,25 +130,37 @@ export default function ReservationsPage() {
           </Row>
         </Row>
 
-        {data.rooms.length === 0 && (
-          <EmptyState
-            title="등록된 회의실이 없습니다"
-            description={user.isManager ? "회의실 관리에서 회의실을 추가하세요." : "매니저에게 회의실 등록을 요청하세요."}
-          />
-        )}
+        {roomsQuery.isPending || reservationsQuery.isPending ? (
+          <LoadingState />
+        ) : loadError ? (
+          <ErrorState message={getErrorMessage(loadError)} onRetry={retry} />
+        ) : (
+          <>
+            {rooms.length === 0 && (
+              <EmptyState
+                title="등록된 회의실이 없습니다"
+                description={
+                  user.isManager ? "회의실 관리에서 회의실을 추가하세요." : "매니저에게 회의실 등록을 요청하세요."
+                }
+              />
+            )}
 
-        <Timeline
-          date={date}
-          onSlotClick={(roomId, startTime) => setDraft({ roomId, date, startTime })}
-          onReservationClick={setDetail}
-        />
+            <Timeline
+              date={date}
+              rooms={rooms}
+              reservations={reservationsQuery.data ?? []}
+              onSlotClick={(roomId, startTime) => setDraft({ roomId, date, startTime })}
+              onReservationClick={setDetail}
+            />
+          </>
+        )}
         <Muted>빈 칸을 누르면 해당 시간으로 예약할 수 있습니다. 표는 좌우로 스크롤됩니다.</Muted>
 
-        <MyReservations />
+        <MyReservations rooms={rooms} />
       </Stack>
 
-      {draft && <ReservationFormModal draft={draft} onClose={() => setDraft(null)} />}
-      {detail && <ReservationDetailModal reservation={detail} onClose={() => setDetail(null)} />}
+      {draft && <ReservationFormModal draft={draft} rooms={rooms} onClose={() => setDraft(null)} />}
+      {detail && <ReservationDetailModal reservation={detail} rooms={rooms} onClose={() => setDetail(null)} />}
     </>
   );
 }

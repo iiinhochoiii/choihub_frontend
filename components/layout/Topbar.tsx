@@ -6,11 +6,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Avatar, Badge, IconButton } from "@/components/ui";
-import { isMyTurn } from "@/lib/approval";
 import { formatRelative, isWithinDays, todayKey } from "@/lib/date";
 import { ROLE_LABELS } from "@/lib/labels";
-import { getDepartmentName } from "@/lib/selectors";
-import { useAuth, useCurrentUser, useData } from "@/lib/store";
+import { useApprovalDocs } from "@/queries/approval";
+import { useAuth, useCurrentUser } from "@/queries/auth";
+import { useCompany, useDirectory } from "@/queries/directory";
+import { useEvents } from "@/queries/events";
+import { useNotices } from "@/queries/notices";
 import { mq } from "@/styles/theme";
 
 const Bar = styled.header`
@@ -220,31 +222,36 @@ function Popover({ trigger, children }: PopoverProps) {
 
 export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const router = useRouter();
-  const { data } = useData();
+  const company = useCompany();
+  const { getDepartmentName } = useDirectory();
   const { logout } = useAuth();
   const user = useCurrentUser();
 
+  // 알림은 부가 정보라 불러오는 중이거나 실패하면 해당 항목을 비워 둔다.
   const today = todayKey();
+  const { data: pendingDocs = [] } = useApprovalDocs("pending");
+  const { data: todayEvents = [] } = useEvents({ from: today, to: today });
+  const { data: noticePage } = useNotices();
+
   const items = [
-    ...data.approvalDocs
-      .filter((doc) => isMyTurn(doc, user.id))
-      .map((doc) => ({
-        key: doc.id,
-        href: `/dashboard/approval/${doc.id}`,
-        icon: <FileSignature />,
-        text: `결재 요청: ${doc.title}`,
-        time: formatRelative(doc.createdAt),
-      })),
-    ...data.events
-      .filter((e) => e.date === today && (e.shared || e.ownerId === user.id))
-      .map((e) => ({
-        key: e.id,
-        href: "/dashboard/schedule",
-        icon: <CalendarDays />,
-        text: `오늘 일정: ${e.title}`,
-        time: e.allDay ? "종일" : `${e.startTime} ~ ${e.endTime}`,
-      })),
-    ...data.notices
+    // 결재 대기함: 내 결재 차례인 문서 (서버가 거른다)
+    ...pendingDocs.map((doc) => ({
+      key: doc.id,
+      href: `/dashboard/approval/${doc.id}`,
+      icon: <FileSignature />,
+      text: `결재 요청: ${doc.title}`,
+      time: formatRelative(doc.createdAt),
+    })),
+    // 공유 일정과 내 일정만 내려온다.
+    ...todayEvents.map((e) => ({
+      key: e.id,
+      href: "/dashboard/schedule",
+      icon: <CalendarDays />,
+      text: `오늘 일정: ${e.title}`,
+      time: e.allDay ? "종일" : `${e.startTime} ~ ${e.endTime}`,
+    })),
+    // 공지 목록 첫 페이지 중 최근 3일 이내 글
+    ...(noticePage?.items ?? [])
       .filter((n) => isWithinDays(n.createdAt, 3))
       .map((n) => ({
         key: n.id,
@@ -265,7 +272,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       <MenuButton onClick={onMenuClick} aria-label="메뉴 열기">
         <Menu />
       </MenuButton>
-      <CompanyName>{data.company.name}</CompanyName>
+      <CompanyName>{company.name}</CompanyName>
 
       <Right>
         <Popover
@@ -305,7 +312,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
               <span>
                 <strong>{user.name}</strong>
                 <small>
-                  {getDepartmentName(data, user.departmentId)} · {user.position}
+                  {getDepartmentName(user.departmentId)} · {user.position}
                 </small>
               </span>
               <ChevronDown />

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { timeToMinutes } from "@/lib/date";
 import { EVENT_CATEGORIES } from "@/lib/labels";
-import type { EventCategory } from "@/lib/types";
+import type { EventCategory } from "@/types";
 
 export const eventSchema = z
   .object({

@@ -16,9 +16,11 @@ import {
   CardHeader,
   CardTitle,
   EmptyState,
+  ErrorState,
   Field,
   FormGrid,
   Input,
+  LoadingState,
   Muted,
   Notice,
   PageHeader,
@@ -26,11 +28,18 @@ import {
   SectionTitle,
   Stack,
 } from "@/components/ui";
-import { buildSteps, nextDocNumber } from "@/lib/approval";
-import { createId } from "@/lib/id";
+import { getErrorMessage } from "@/apis/defaultInstance";
+import { previewSteps } from "@/lib/approval";
+import { setServerErrors } from "@/lib/form";
 import { type ApprovalDraftFormValues, createApprovalDraftSchema } from "@/lib/schemas/approval";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { ApprovalDocument, ApprovalForm } from "@/lib/types";
+import { useApprovalForms, useCreateApprovalDoc } from "@/queries/approval";
+import { useCurrentUser } from "@/queries/auth";
+import type { ApprovalForm } from "@/types";
+
+const ErrorText = styled.p`
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
 
 const FormGridCards = styled.div`
   display: grid;
@@ -77,8 +86,8 @@ const FormCard = styled.button`
 `;
 
 export default function NewApprovalPage() {
-  const { data } = useData();
-  const forms = data.approvalForms.filter((f) => f.active);
+  // 사용 중인 양식만 받는다.
+  const { data: forms, isPending, error, refetch } = useApprovalForms({ active: true });
   const [form, setForm] = useState<ApprovalForm | null>(null);
 
   return (
@@ -102,6 +111,14 @@ export default function NewApprovalPage() {
       />
       {form ? (
         <DraftForm key={form.id} form={form} />
+      ) : isPending ? (
+        <Card>
+          <LoadingState />
+        </Card>
+      ) : error ? (
+        <Card>
+          <ErrorState message={getErrorMessage(error)} onRetry={() => refetch()} />
+        </Card>
       ) : forms.length === 0 ? (
         <Card>
           <EmptyState title="사용 가능한 결재 양식이 없습니다." description="매니저에게 양식 등록을 요청하세요." />
@@ -129,12 +146,13 @@ export default function NewApprovalPage() {
 
 function DraftForm({ form }: { form: ApprovalForm }) {
   const router = useRouter();
-  const { data, update } = useData();
   const user = useCurrentUser();
+  const createDoc = useCreateApprovalDoc();
   const schema = useMemo(() => createApprovalDraftSchema(form.fields), [form.fields]);
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors },
   } = useForm<ApprovalDraftFormValues>({
     resolver: zodResolver(schema),
@@ -144,26 +162,20 @@ function DraftForm({ form }: { form: ApprovalForm }) {
     },
   });
 
-  const steps = buildSteps(form, user.id);
+  // 결재선 미리보기. 실제 단계·문서번호는 상신할 때 서버가 만든다.
+  const steps = previewSteps(form.approverIds, user.id);
 
   const submit = handleSubmit(({ title, values }) => {
     if (steps.length === 0) return;
-
-    const doc: ApprovalDocument = {
-      id: createId("doc"),
-      docNumber: nextDocNumber(data.approvalDocs),
-      formId: form.id,
-      formName: form.name,
-      title,
-      fields: form.fields,
-      values,
-      drafterId: user.id,
-      createdAt: new Date().toISOString(),
-      status: "in_progress",
-      steps,
-    };
-    update((prev) => ({ ...prev, approvalDocs: [doc, ...prev.approvalDocs] }));
-    router.push(`/dashboard/approval/${doc.id}`);
+    createDoc.mutate(
+      { formId: form.id, title, values },
+      {
+        onSuccess: (doc) => router.push(`/dashboard/approval/${doc.id}`),
+        onError: (err) => {
+          if (!setServerErrors(err, setError)) setError("root", { message: getErrorMessage(err) });
+        },
+      },
+    );
   });
 
   return (
@@ -218,11 +230,12 @@ function DraftForm({ form }: { form: ApprovalForm }) {
           </FormGrid>
         </Card>
 
+        {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
         <Row $justify="flex-end">
           <ButtonLink href="/dashboard/approval" $variant="secondary">
             취소
           </ButtonLink>
-          <Button type="submit" disabled={steps.length === 0}>
+          <Button type="submit" disabled={steps.length === 0 || createDoc.isPending}>
             <Send />
             결재 상신
           </Button>

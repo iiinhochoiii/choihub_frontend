@@ -3,14 +3,15 @@
 import styled from "@emotion/styled";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useWatch } from "react-hook-form";
+import { getErrorMessage } from "@/apis/defaultInstance";
 import { Button, Field, FormGrid, Input, Modal, Select, Textarea } from "@/components/ui";
-import { getUsedLeaveDays } from "@/lib/attendance";
 import { todayKey } from "@/lib/date";
-import { createId } from "@/lib/id";
+import { setServerErrors } from "@/lib/form";
 import { LEAVE_TYPES } from "@/lib/labels";
 import { getLeavePeriod, type LeaveRequestFormValues, leaveRequestSchema } from "@/lib/schemas/attendance";
-import { useCurrentUser, useData } from "@/lib/store";
-import type { LeaveType } from "@/lib/types";
+import { useCreateLeaveRequest, useLeaveBalance } from "@/queries/attendance";
+import { useCurrentUser } from "@/queries/auth";
+import type { LeaveType } from "@/types";
 import { isAnnualType } from "./utils";
 
 const Summary = styled.p`
@@ -45,8 +46,10 @@ const createDefaultValues = (): LeaveRequestFormValues => ({
 });
 
 export function LeaveRequestModal({ open, onClose }: Props) {
-  const { data, update } = useData();
-  const user = useCurrentUser();
+  const { data: balance } = useLeaveBalance();
+  // 매니저 본인의 휴가는 승인 절차 없이 바로 승인된다. 직원은 소속 부서의 매니저가 승인한다.
+  const { isManager } = useCurrentUser();
+  const createLeave = useCreateLeaveRequest();
   const {
     register,
     handleSubmit,
@@ -59,52 +62,29 @@ export function LeaveRequestModal({ open, onClose }: Props) {
     defaultValues: createDefaultValues(),
   });
 
+  // 일수는 미리보기용. 실제 일수·잔액·중복·주말 검사는 서버가 한다.
   const [type, startDate, endDate] = useWatch({ control, name: ["type", "startDate", "endDate"] });
   const { isHalf, days } = getLeavePeriod(type, startDate, endDate);
 
-  const used = getUsedLeaveDays(data.leaveRequests, user.id);
-  const pending = data.leaveRequests
-    .filter((r) => r.memberId === user.id && r.status === "pending" && isAnnualType(r.type))
-    .reduce((sum, r) => sum + r.days, 0);
-  const available = user.annualLeaveTotal - used - pending;
-
   const close = () => {
     reset(createDefaultValues());
+    createLeave.reset();
     onClose();
   };
 
-  const submit = handleSubmit((values) => {
-    const period = getLeavePeriod(values.type, values.startDate, values.endDate);
-    if (isAnnualType(values.type) && period.days > available) {
-      return setError("root", { message: `사용 가능한 연차(${available}일)를 초과합니다.` });
+  const submit = handleSubmit(async (values) => {
+    try {
+      await createLeave.mutateAsync({
+        type: values.type,
+        startDate: values.startDate,
+        // 반차는 시작일 하루
+        endDate: getLeavePeriod(values.type, values.startDate, values.endDate).endDate,
+        reason: values.reason,
+      });
+      close();
+    } catch (error) {
+      if (!setServerErrors(error, setError)) setError("root", { message: getErrorMessage(error) });
     }
-    const overlap = data.leaveRequests.some(
-      (r) =>
-        r.memberId === user.id &&
-        r.status !== "rejected" &&
-        r.startDate <= period.endDate &&
-        r.endDate >= values.startDate,
-    );
-    if (overlap) return setError("root", { message: "이미 신청한 휴가와 기간이 겹칩니다." });
-
-    update((prev) => ({
-      ...prev,
-      leaveRequests: [
-        ...prev.leaveRequests,
-        {
-          id: createId("l"),
-          memberId: user.id,
-          type: values.type,
-          startDate: values.startDate,
-          endDate: period.endDate,
-          days: period.days,
-          reason: values.reason,
-          status: "pending",
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    }));
-    close();
   });
 
   return (
@@ -117,8 +97,8 @@ export function LeaveRequestModal({ open, onClose }: Props) {
           <Button $variant="secondary" onClick={close}>
             취소
           </Button>
-          <Button type="submit" form="leave-request-form">
-            신청하기
+          <Button type="submit" form="leave-request-form" disabled={createLeave.isPending}>
+            {isManager ? "등록하기" : "신청하기"}
           </Button>
         </>
       }
@@ -140,7 +120,9 @@ export function LeaveRequestModal({ open, onClose }: Props) {
           </div>
           <div data-span={isHalf ? "full" : undefined}>
             <Field label={isHalf ? "날짜" : "시작일"} required error={errors.startDate?.message}>
-              {(id) => <Input id={id} type="date" aria-invalid={!!errors.startDate} {...register("startDate")} />}
+              {(id) => (
+                <Input id={id} type="date" aria-invalid={!!errors.startDate} {...register("startDate")} />
+              )}
             </Field>
           </div>
           {!isHalf && (
@@ -175,10 +157,14 @@ export function LeaveRequestModal({ open, onClose }: Props) {
           {isAnnualType(type) && (
             <>
               {" "}
-              · 사용 가능 연차 <strong>{available}일</strong>
+              · 사용 가능 연차 <strong>{balance ? `${balance.available}일` : "-"}</strong>
             </>
           )}
           {!isAnnualType(type) && " · 연차에서 차감되지 않습니다."}
+          <br />
+          {isManager
+            ? "매니저 휴가는 별도 승인 없이 신청 즉시 승인됩니다."
+            : "소속 부서의 매니저가 승인합니다. 주말은 일수에서 빠집니다."}
         </Summary>
         {errors.root && <ErrorText role="alert">{errors.root.message}</ErrorText>}
       </form>
