@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { syncSessionTypeCookie } from "@/lib/sessionCookie";
 
 export const SESSION_KEY = "groupware:session";
 
@@ -28,7 +29,10 @@ export const useSessionStore = create<SessionState>()(
     (set) => ({
       session: null,
       hydrated: false,
-      setSession: (session) => set({ session }),
+      setSession: (session) => {
+        syncSessionTypeCookie(session);
+        set({ session });
+      },
     }),
     {
       name: SESSION_KEY,
@@ -38,7 +42,11 @@ export const useSessionStore = create<SessionState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: ({ session }) => ({ session }),
       skipHydration: true,
-      onRehydrateStorage: () => () => useSessionStore.setState({ hydrated: true }),
+      onRehydrateStorage: () => (state) => {
+        // 쿠키가 생기기 전에 로그인했거나 다른 탭에서 세션이 바뀐 경우에도 쿠키를 맞춘다.
+        syncSessionTypeCookie(state?.session ?? null);
+        useSessionStore.setState({ hydrated: true });
+      },
     },
   ),
 );
