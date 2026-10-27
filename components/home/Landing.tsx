@@ -18,6 +18,7 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { GithubIcon } from "@/components/common/GithubIcon";
 import { LogoMark } from "@/components/common/LogoMark";
 import { ButtonLink, transientOptions } from "@/components/ui";
 import { useAuth } from "@/queries/auth";
@@ -479,8 +480,37 @@ const Footer = styled.footer`
   border-top: 1px solid ${({ theme }) => theme.colors.border};
   font-size: 13px;
   color: ${({ theme }) => theme.colors.textSubtle};
-  text-align: center;
+
+  p + p {
+    margin-top: 4px;
+  }
 `;
+
+const FooterInner = styled(Container)`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+
+  ${mq.md} {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+`;
+
+const SocialLink = styled.a`
+  display: inline-flex;
+  color: ${({ theme }) => theme.colors.textSubtle};
+
+  &:hover {
+    color: ${({ theme }) => theme.colors.text};
+  }
+`;
+
+const CONTACT_EMAIL = "dlsgh120@gmail.com";
+// TODO: GitHub 주소 입력
+const GITHUB_URL = "https://github.com/iiinhochoiii/choihub_frontend";
 
 export function Landing() {
   const { user } = useAuth();
@@ -653,9 +683,18 @@ export function Landing() {
       </main>
 
       <Footer>
-        <Container>
-          © ChoiHub. 올인원 그룹웨어 데모 · <a href="/admin/login">운영자 로그인</a>
-        </Container>
+        <FooterInner>
+          <div>
+            <p>
+              ChoiHub. 올인원 그룹웨어 · <a href="/login">데모 로그인</a> ·{" "}
+              <a href={`mailto:${CONTACT_EMAIL}`}>문의하기</a>
+            </p>
+            <p>Copyright © 2026 by ChoiHub. All rights reserved.</p>
+          </div>
+          <SocialLink href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+            <GithubIcon />
+          </SocialLink>
+        </FooterInner>
       </Footer>
     </Page>
   );
