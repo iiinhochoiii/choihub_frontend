@@ -5,7 +5,6 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { getErrorMessage } from "@/apis/defaultInstance";
 import {
-  Badge,
   ErrorState,
   IconButton,
   LoadingState,
@@ -14,9 +13,8 @@ import {
   Table,
   TableWrap,
 } from "@/components/ui";
-import { ATTENDANCE_STATUS, getAttendanceStatus, getWorkedMinutes } from "@/lib/attendance";
+import { getDayStatus, getDayStatusBadge, getWorkedMinutes } from "@/lib/attendance";
 import { addMonths, formatDuration, formatMonthDay, isWeekend, toDateKey, todayKey } from "@/lib/date";
-import { LEAVE_TYPES } from "@/lib/labels";
 import { useMyAttendance, useMyLeaveRequests, useTodayAttendance } from "@/queries/attendance";
 import { useCurrentUser } from "@/queries/auth";
 import { useCompany } from "@/queries/directory";
@@ -120,11 +118,9 @@ export function RecordsTab() {
                     <td>{record?.checkOut ?? "-"}</td>
                     <MutedCell>{minutes ? formatDuration(minutes) : "-"}</MutedCell>
                     <td>
-                      {leave && !record ? (
-                        <Badge $tone="info">{LEAVE_TYPES[leave.type].label}</Badge>
-                      ) : (
-                        <StatusBadge value={ATTENDANCE_STATUS[getAttendanceStatus(record, company)]} />
-                      )}
+                      <StatusBadge
+                        value={getDayStatusBadge(getDayStatus(record, leave?.type, company), leave?.type)}
+                      />
                     </td>
                   </tr>
                 );

@@ -34,8 +34,9 @@ import {
   StatusBadge,
   transientOptions,
 } from "@/components/ui";
+import { findLeaveOn } from "@/components/attendance/utils";
 import { getCurrentStep, isMyTurn } from "@/lib/approval";
-import { ATTENDANCE_STATUS, getAttendanceStatus } from "@/lib/attendance";
+import { getDayStatus, getDayStatusBadge } from "@/lib/attendance";
 import { formatDate, formatLongDate, formatMonthDay, formatRelative, toDateKey } from "@/lib/date";
 import {
   APPROVAL_DOC_STATUS,
@@ -47,7 +48,13 @@ import {
 } from "@/lib/labels";
 import { getRoomName } from "@/lib/selectors";
 import { useApprovalDocs } from "@/queries/approval";
-import { useCheckIn, useCheckOut, useLeaveBalance, useTodayAttendance } from "@/queries/attendance";
+import {
+  useCheckIn,
+  useCheckOut,
+  useLeaveBalance,
+  useMyLeaveRequests,
+  useTodayAttendance,
+} from "@/queries/attendance";
 import { useCurrentUser } from "@/queries/auth";
 import { useCompany, useDirectory } from "@/queries/directory";
 import { useEvents } from "@/queries/events";
@@ -331,7 +338,8 @@ export function DashboardHome() {
   const todayQuery = useTodayAttendance();
   const today = todayQuery.data?.date ?? toDateKey(now);
   const record = todayQuery.data?.record ?? null;
-  const attendanceStatus = getAttendanceStatus(record, company);
+  const todayLeave = findLeaveOn(useMyLeaveRequests().data ?? [], user.id, today);
+  const attendanceStatus = getDayStatus(record, todayLeave?.type, company);
   const checkInMutation = useCheckIn();
   const checkOutMutation = useCheckOut();
   const attendanceBusy = checkInMutation.isPending || checkOutMutation.isPending;
@@ -463,7 +471,7 @@ export function DashboardHome() {
               <Clock />
               오늘의 근태
             </CardTitle>
-            <StatusBadge value={ATTENDANCE_STATUS[attendanceStatus]} />
+            <StatusBadge value={getDayStatusBadge(attendanceStatus, todayLeave?.type)} />
           </CardHeader>
           {todayQuery.isPending ? (
             <LoadingState />

@@ -4,7 +4,6 @@ import styled from "@emotion/styled";
 import { useState } from "react";
 import { getErrorMessage } from "@/apis/defaultInstance";
 import {
-  Badge,
   Button,
   Card,
   CardHeader,
@@ -21,7 +20,7 @@ import {
   TitleCell,
   Muted,
 } from "@/components/ui";
-import { ATTENDANCE_STATUS } from "@/lib/attendance";
+import { getDayStatusBadge } from "@/lib/attendance";
 import { formatDate, formatMonthDay } from "@/lib/date";
 import { LEAVE_TYPES } from "@/lib/labels";
 import { useApproveLeave, useLeaveRequests, useRejectLeave, useTeamAttendance } from "@/queries/attendance";
@@ -231,11 +230,7 @@ function TeamTodayCard() {
                 <td>{record?.checkIn ?? "-"}</td>
                 <td>{record?.checkOut ?? "-"}</td>
                 <td>
-                  {status === "leave" ? (
-                    <Badge $tone="info">{leave ? LEAVE_TYPES[leave.type].label : "휴가"}</Badge>
-                  ) : (
-                    <StatusBadge value={ATTENDANCE_STATUS[status]} />
-                  )}
+                  <StatusBadge value={getDayStatusBadge(status, leave?.type)} />
                 </td>
               </tr>
             ))}

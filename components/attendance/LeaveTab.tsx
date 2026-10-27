@@ -100,8 +100,8 @@ export function LeaveTab() {
                     )}
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    {/* 대기 중인 신청, 또는 시작 전인 자동 승인 휴가(매니저 본인)만 취소할 수 있다. 서버도 같은 규칙으로 막는다. */}
-                    {(r.status === "pending" || (r.autoApproved && r.startDate > today)) && (
+                    {/* 대기 중인 신청, 또는 시작일이 오늘 이후(당일 포함)인 자동 승인 휴가(매니저 본인)만 취소할 수 있다. 서버도 같은 규칙으로 막는다. */}
+                    {(r.status === "pending" || (r.autoApproved && r.startDate >= today)) && (
                       <Button
                         $size="sm"
                         $variant="ghost"
